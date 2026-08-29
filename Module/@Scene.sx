@@ -47,14 +47,12 @@ class SceneSystem {
 }
 
 public class Scene {
-    private var application:Application
     private var resource_store:Resources
     private var registered_systems:SceneSystem[]
     private var state:SceneState
     private var query_dispatches:int
 
     init(application:Application) {
-        self.application = application
         self.resource_store = application.resources().scope()
         self.registered_systems = []
         self.state = SceneState.ready

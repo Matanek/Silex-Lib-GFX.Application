@@ -48,3 +48,48 @@ Removing or finalizing the scene never changes the global store.
 The package depends only on `GFX` and `GFX.ECS`. Scene2D, Scene3D, Rendering,
 Canvas, Animation, and Audio integrate separately; they are not part of this
 first generic context.
+
+## Application hosting
+
+`Application.Scenes` is both the static Plugin and the injectable host that
+owns the single active scene. It adds six fixed relays to the global schedules,
+so replacing a scene never changes the Application plan.
+
+```sx
+use GFX.Application
+
+class Level { let number:int }
+
+func next_level(
+    scenes:&Application.Scenes,
+    level:@Level,
+    controller:&Application.Controller
+) {
+    if level.number == 2 { controller.stop(); return }
+    scenes.request(scenes.create()
+        ..add_resource(Level(number:level.number + 1))
+        ..add_system(Application.Schedule.update, next_level))
+}
+
+func main() {
+    var application = Application()
+    var initial = Application.Scene(application)
+        ..add_resource(Level(number:1))
+        ..add_system(Application.Schedule.update, next_level)
+    var scenes = Application.Scenes(initial)
+
+    application.add_plugin(scenes)
+    application.run()
+}
+```
+
+The Application mounts the initial scene during `startup`. A request made in a
+frame remains pending until the beginning of the next `pre_update`: the
+outgoing scene therefore completes its frame, then runs `shutdown` and
+`finalize` before the incoming scene runs `initialize` and `startup`. A second
+request before that boundary reports an explicit error.
+
+On Application shutdown, any pending request is cancelled and the active scene
+is finalized. Install Plugins that provide global capabilities first and
+`Scenes` last; the reverse Plugin shutdown order then guarantees that the scene
+releases its uses before those capabilities.

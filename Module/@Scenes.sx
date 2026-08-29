@@ -1,0 +1,135 @@
+// Aggregated into the canonical GFX.Application module.
+use GFX.Application.Plugin as PluginProtocol
+use Interop.C
+
+// Installs a fixed scene relay in an Application and owns its single active
+// scene. Replacements are committed at the beginning of pre_update so the
+// outgoing scene always completes the frame in which it requested the change.
+public class Scenes:PluginProtocol {
+    private var application_address:uint
+    private var active:Scene?
+    private var pending:Scene?
+
+    init(initial:Scene? = null) {
+        self.application_address = 0
+        self.active = null
+        self.pending = initial
+    }
+
+    func id() str { return "GFX.Application.Scenes" }
+
+    func build(application:&Application) {
+        if self.application_address != 0 {
+            panic("GFX.Application.Scenes cannot be installed in more than one Application")
+        }
+        self.application_address = C.object_address(application)
+        application.add_resource(self)
+        application.add_system(Schedule.startup, start_scenes)
+        application.add_system(Schedule.pre_update, pre_update_scenes)
+        application.add_system(Schedule.update, update_scenes)
+        application.add_system(Schedule.post_update, post_update_scenes)
+        application.add_system(Schedule.render, render_scenes)
+        application.add_system(Schedule.shutdown, stop_scenes)
+    }
+
+    // Creates a ready scene scoped to the Application that owns this host.
+    // The host must have been prepared through Application.add_plugin first.
+    func create() Scene {
+        if self.application_address == 0 {
+            panic("GFX.Application.Scenes must be installed before creating a scene")
+        }
+        var application = C.object_from_address<Application>(self.application_address)
+        return Scene(application)
+    }
+
+    // Schedules one atomic replacement. A second request before the next safe
+    // boundary is rejected instead of silently replacing the first request.
+    func request(scene:Scene) {
+        if self.application_address == 0 {
+            panic("GFX.Application.Scenes must be installed before requesting a scene")
+        }
+        if scene.is_mounted() || scene.is_finalized() {
+            panic("GFX.Application.Scenes only accepts a ready scene")
+        }
+        if self.pending != null {
+            panic("GFX.Application.Scenes already has a pending transition")
+        }
+        self.pending = scene
+    }
+
+    func has_active() bool { return self.active != null }
+    func has_pending() bool { return self.pending != null }
+
+    module func start() {
+        self.commit_pending()
+    }
+
+    module func run(schedule:Schedule) {
+        if schedule == Schedule.pre_update { self.commit_pending() }
+        if var scene = self.active { scene.run_schedule(schedule) }
+    }
+
+    module func stop() {
+        // A request made during the last frame is cancelled rather than mounted
+        // while the Application is already shutting down.
+        self.pending = null
+        self.application_address = 0
+        var previous = self.active
+        self.active = null
+        if var scene = previous { scene.unmount() }
+    }
+
+    private func commit_pending() {
+        var requested = self.pending
+        self.pending = null
+        if requested == null { return }
+
+        var previous = self.active
+        self.active = null
+        if var scene = previous { scene.unmount() }
+
+        if var scene = requested {
+            scene.mount()
+            self.active = scene
+        }
+    }
+}
+
+// Direct Application callbacks deliberately serialize the relay with global
+// systems. Scene systems can consult parent resources, so their accesses must
+// not be hidden behind a parallel typed Application callback.
+func start_scenes(application:Application) {
+    var resources = application.resources()
+    var scenes:&Scenes = resources.get_mut<Scenes>()
+    scenes.start()
+}
+
+func pre_update_scenes(application:Application) {
+    var resources = application.resources()
+    var scenes:&Scenes = resources.get_mut<Scenes>()
+    scenes.run(Schedule.pre_update)
+}
+
+func update_scenes(application:Application) {
+    var resources = application.resources()
+    var scenes:&Scenes = resources.get_mut<Scenes>()
+    scenes.run(Schedule.update)
+}
+
+func post_update_scenes(application:Application) {
+    var resources = application.resources()
+    var scenes:&Scenes = resources.get_mut<Scenes>()
+    scenes.run(Schedule.post_update)
+}
+
+func render_scenes(application:Application) {
+    var resources = application.resources()
+    var scenes:&Scenes = resources.get_mut<Scenes>()
+    scenes.run(Schedule.render)
+}
+
+func stop_scenes(application:Application) {
+    var resources = application.resources()
+    var scenes:&Scenes = resources.get_mut<Scenes>()
+    scenes.stop()
+}

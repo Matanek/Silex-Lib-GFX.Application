@@ -1,7 +1,8 @@
 # GFX.Application
 
-`GFX.Application` adds isolated, application-scoped scenes to the canonical
-`GFX.Application` module without replacing the core `Application` type.
+`GFX.Application` adds isolated, application-scoped scenes and a fixed
+transition host to the canonical `GFX.Application` module without replacing
+the core `Application` type.
 
 ```text
 silex install GFX.Application
