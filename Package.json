@@ -1,0 +1,14 @@
+{
+  "name": "GFX.Application",
+  "version": "0.1.0",
+  "description": {
+    "en": "Application-scoped scenes with isolated systems, resources, and ECS entities.",
+    "fr": "Scènes applicatives aux systèmes, ressources et entités ECS isolés."
+  },
+  "authors": ["Matanek"],
+  "requires": { "silex": ">=0.43.0" },
+  "dependencies": {
+    "GFX": "^0.39.0",
+    "GFX.ECS": "^0.2.0"
+  }
+}

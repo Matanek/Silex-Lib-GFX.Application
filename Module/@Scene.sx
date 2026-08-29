@@ -1,0 +1,253 @@
+// Aggregated into the canonical GFX.Application module.
+use GFX.ECS.Commands
+use GFX.ECS.World
+
+enum SceneState {
+    ready
+    mounted
+    finalized
+}
+
+class SceneSystem {
+    let schedule:Schedule
+    let after:bool
+    let callback:func(Scene)
+    let typed_callback:func(Scene, int)
+    let reads:str[]
+    let writes:str[]
+    let flags:uint
+
+    init(
+        schedule:Schedule,
+        after:bool,
+        callback:func(Scene),
+        typed_callback:func(Scene, int),
+        reads:str[],
+        writes:str[],
+        flags:uint
+    ) {
+        self.schedule = schedule
+        self.after = after
+        self.callback = callback
+        self.typed_callback = typed_callback
+        self.reads = reads
+        self.writes = writes
+        self.flags = flags
+    }
+
+    func is_typed() bool { return (self.flags & 16) != 0 }
+
+    func execute(scene:Scene, order:int) {
+        if self.is_typed() {
+            self.typed_callback(scene, order)
+        } else {
+            self.callback(scene)
+        }
+    }
+}
+
+public class Scene {
+    private var application:Application
+    private var resource_store:Resources
+    private var registered_systems:SceneSystem[]
+    private var state:SceneState
+    private var query_dispatches:int
+
+    init(application:Application) {
+        self.application = application
+        self.resource_store = application.resources().scope()
+        self.registered_systems = []
+        self.state = SceneState.ready
+        self.query_dispatches = 0
+        self.resource_store.insert(World())
+        self.resource_store.insert(Commands())
+    }
+
+    func resources() Resources {
+        self.require_available()
+        return self.resource_store
+    }
+
+    func add_resource<T>(value:T) Scene {
+        self.require_configurable()
+        self.resource_store.insert(move value)
+        return self
+    }
+
+    func add_system(schedule:Schedule, callback:func(Scene)) Scene {
+        self.require_configurable()
+        self.registered_systems.append(SceneSystem(
+            schedule:schedule,
+            after:false,
+            callback:callback,
+            typed_callback:ignore_typed_scene_system,
+            reads:[],
+            writes:[],
+            flags:0 as uint
+        ))
+        return self
+    }
+
+    func add_system<System>(schedule:Schedule, callback:System) Scene {
+        panic("typed scene system registration was not specialized")
+    }
+
+    func add_after_system(schedule:Schedule, callback:func(Scene)) Scene {
+        self.require_configurable()
+        self.registered_systems.append(SceneSystem(
+            schedule:schedule,
+            after:true,
+            callback:callback,
+            typed_callback:ignore_typed_scene_system,
+            reads:[],
+            writes:[],
+            flags:0 as uint
+        ))
+        return self
+    }
+
+    func add_after_system<System>(schedule:Schedule, callback:System) Scene {
+        panic("typed scene system registration was not specialized")
+    }
+
+    module func __silex_add_system(
+        schedule:Schedule,
+        callback:func(Scene, int),
+        after:bool,
+        reads:str[],
+        writes:str[],
+        flags:uint
+    ) Scene {
+        self.require_configurable()
+        self.registered_systems.append(SceneSystem(
+            schedule:schedule,
+            after:after,
+            callback:ignore_scene_system,
+            typed_callback:callback,
+            reads:reads,
+            writes:writes,
+            flags:flags + 16
+        ))
+        return self
+    }
+
+    module func __silex_run_query(
+        count:int,
+        system_order:int,
+        commands_address:uint,
+        callback:func(Scene, int, int, int, uint)
+    ) {
+        self.query_dispatches++
+        callback(self, system_order, 0, count, commands_address)
+    }
+
+    func mount() {
+        if self.state == SceneState.mounted {
+            panic("GFX.Application.Scene is already mounted")
+        }
+        if self.state == SceneState.finalized {
+            panic("GFX.Application.Scene cannot be mounted after finalization")
+        }
+        self.state = SceneState.mounted
+        self.run_phase(Schedule.initialize)
+        self.run_phase(Schedule.startup)
+    }
+
+    func run_schedule(schedule:Schedule) {
+        if self.state != SceneState.mounted {
+            panic("GFX.Application.Scene must be mounted before running a schedule")
+        }
+        if schedule == Schedule.initialize || schedule == Schedule.startup ||
+            schedule == Schedule.shutdown || schedule == Schedule.finalize
+        {
+            panic("GFX.Application.Scene lifecycle schedules are controlled by mount and unmount")
+        }
+        self.run_phase(schedule)
+    }
+
+    func unmount() {
+        if self.state != SceneState.mounted {
+            panic("GFX.Application.Scene can only unmount an active scene")
+        }
+        self.run_phase(Schedule.shutdown)
+        self.run_phase(Schedule.finalize)
+        self.state = SceneState.finalized
+        self.resource_store.clear()
+    }
+
+    func is_mounted() bool { return self.state == SceneState.mounted }
+    func is_finalized() bool { return self.state == SceneState.finalized }
+
+    package func system_count() int { return self.registered_systems.count() }
+    package func query_dispatch_count() int { return self.query_dispatches }
+
+    drop {
+        if self.state == SceneState.mounted {
+            self.unmount()
+        } else {
+            self.resource_store.clear()
+        }
+    }
+
+    private func require_configurable() {
+        if self.state != SceneState.ready {
+            panic("GFX.Application.Scene cannot change its configuration after mount")
+        }
+    }
+
+    private func require_available() {
+        if self.state == SceneState.finalized {
+            panic("GFX.Application.Scene resources were finalized")
+        }
+    }
+
+    private func run_phase(schedule:Schedule) {
+        let reversed = schedule == Schedule.shutdown || schedule == Schedule.finalize
+        self.run_systems(schedule, false, reversed)
+        self.run_systems(schedule, true, reversed)
+        if schedule == Schedule.post_update || schedule == Schedule.shutdown ||
+            schedule == Schedule.finalize
+        {
+            self.flush_commands()
+        }
+    }
+
+    private func flush_commands() {
+        var stored = self.resource_store.remove<Commands>()
+        if var commands = stored {
+            if true {
+                var world:&World = self.resource_store.get_mut<World>()
+                commands.flush(world)
+            }
+            self.resource_store.insert(commands)
+            return
+        }
+        panic("GFX.Application.Scene has no deferred command queue")
+    }
+
+    private func run_systems(schedule:Schedule, after:bool, reversed:bool) {
+        if reversed {
+            var index = self.registered_systems.count() - 1
+            while index >= 0 {
+                var system = self.registered_systems[index]
+                if system.schedule == schedule && system.after == after {
+                    system.execute(self, index)
+                }
+                index--
+            }
+            return
+        }
+
+        var index = 0
+        while index < self.registered_systems.count() {
+            var system = self.registered_systems[index]
+            if system.schedule == schedule && system.after == after {
+                system.execute(self, index)
+            }
+            index++
+        }
+    }
+}
+
+func ignore_scene_system(scene:Scene) {}
+func ignore_typed_scene_system(scene:Scene, order:int) {}
