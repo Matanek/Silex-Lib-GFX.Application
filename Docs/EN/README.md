@@ -63,9 +63,11 @@ These names answer different intentions:
 
 An application scene is therefore neither a 2D nor a 3D scene. It may contain
 no graphics, use one domain, or compose both. For 2D content, install
-`Scene2D.Plugin()` once on the Application so the renderer and its caches stay
-alive, then add `Scene2D.Content()` to every scene that owns the components.
-The same separation applies to Scene3D and Animation.
+`Plugins.Scene2D()` once on the Application so the renderer and its caches stay
+alive, then add `Plugins.Scene2DContent()` to every scene that owns the
+components. The same separation applies to Scene3D and Animation. All these
+Plugins are exposed directly under `GFX.Plugins`, so catalog completion is
+enough to discover them.
 
 Systems remain ordinary functions registered through
 `add_system(Schedule, callback)`. Their parameters inject existing resources
@@ -86,27 +88,28 @@ configuration fails before `initialize` and names the missing capability.
 Graphics packages therefore separate two intents: `Plugin()` installs global
 capabilities whose lifetime spans the Application, while `Content()` connects
 systems that read components from the active scene. One scene may combine
-`Scene2D.Content()`, `Scene3D.Content()`, and `Animation.Content()`, for
-example.
+`Plugins.Scene2DContent()`, `Plugins.Scene3DContent()`, and
+`Plugins.AnimationContent()`, for example.
 
 ## Application hosting
 
-`Application.Scenes` is both the static Plugin and the injectable host that
-owns the single active scene. It adds six fixed relays to the global schedules,
-so replacing a scene never changes the Application plan.
+`Plugins.SceneManager` exposes both the static Plugin and the injectable
+host that owns the single active scene. It adds six fixed relays to the global
+schedules, so replacing a scene never changes the Application plan.
 
 ```sx
 use GFX.Application
+use GFX.Plugins
 
 class Level { let number:int }
 
 func next_level(
-    scenes:&Application.Scenes,
+    manager:&Plugins.SceneManager,
     level:@Level,
     controller:&Application.Controller
 ) {
     if level.number == 2 { controller.stop(); return }
-    scenes.request(scenes.create()
+    manager.request(manager.create()
         ..add_resource(Level(number:level.number + 1))
         ..add_system(Application.Schedule.update, next_level))
 }
@@ -116,9 +119,9 @@ func main() {
     var initial = Application.Scene(application)
         ..add_resource(Level(number:1))
         ..add_system(Application.Schedule.update, next_level)
-    var scenes = Application.Scenes(initial)
+    var manager = Plugins.SceneManager(initial)
 
-    application.add_plugin(scenes)
+    application.add_plugin(manager)
     application.run()
 }
 ```
@@ -131,7 +134,7 @@ request before that boundary reports an explicit error.
 
 On Application shutdown, any pending request is cancelled and the active scene
 is finalized. Install Plugins that provide global capabilities first and
-`Scenes` last; the reverse Plugin shutdown order then guarantees that the scene
+`SceneManager` last; the reverse Plugin shutdown order then guarantees that the scene
 releases its uses before those capabilities.
 
 ## Executable examples

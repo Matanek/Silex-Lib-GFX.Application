@@ -2,7 +2,7 @@ use GFX.Application
 
 func main() {
     var application = Application()
-    var scenes = Application.Scenes()
+    var scenes = Application.SceneManager()
     application.add_plugin(scenes).prepare()
     scenes.request(scenes.create())
     scenes.request(scenes.create())

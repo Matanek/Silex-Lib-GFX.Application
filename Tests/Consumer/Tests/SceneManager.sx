@@ -1,5 +1,11 @@
 use GFX.Application
 use GFX.ECS
+use GFX.Plugins
+
+test "discover the scene host directly through the plugin catalog" {
+    var scenes = Plugins.SceneManager()
+    assert(scenes.id() == "GFX.Application.SceneManager")
+}
 
 class TransitionTrace {
     var steps:int[]
@@ -15,7 +21,7 @@ func first_initialize(trace:&TransitionTrace) { trace.steps.append(1) }
 func first_startup(trace:&TransitionTrace) { trace.steps.append(2) }
 
 func first_update(
-    scenes:&Application.Scenes,
+    scenes:&Application.SceneManager,
     trace:&TransitionTrace,
     commands:&ECS.Commands
 ) {
@@ -62,7 +68,7 @@ func second_initialize(
 
 func second_startup(trace:&TransitionTrace) { trace.steps.append(7) }
 
-func second_update(scenes:&Application.Scenes, trace:&TransitionTrace) {
+func second_update(scenes:&Application.SceneManager, trace:&TransitionTrace) {
     trace.steps.append(8)
     scenes.request(scenes.create()
         ..add_system(Application.Schedule.initialize, third_initialize)
@@ -105,7 +111,7 @@ test "replace several scenes from injected systems at safe frame boundaries" {
         ..add_system(Application.Schedule.update, first_update)
         ..add_system(Application.Schedule.shutdown, first_shutdown)
         ..add_system(Application.Schedule.finalize, first_finalize)
-    var scenes = Application.Scenes(first)
+    var scenes = Application.SceneManager(first)
     application.add_plugin(scenes)
 
     assert(application.run() == 0)
@@ -147,7 +153,7 @@ func stop_dependency(dependency:&ShutdownDependency) {
 }
 
 func request_while_stopping(
-    scenes:&Application.Scenes,
+    scenes:&Application.SceneManager,
     edge:&ShutdownEdge,
     controller:&Application.Controller
 ) {
@@ -172,7 +178,7 @@ test "cancel a pending transition and finalize the active scene on application s
         ..add_system(Application.Schedule.update, request_while_stopping)
         ..add_system(Application.Schedule.shutdown, outgoing_stop)
         ..add_system(Application.Schedule.finalize, outgoing_finalize)
-    var scenes = Application.Scenes(outgoing)
+    var scenes = Application.SceneManager(outgoing)
     application.add_plugin(ShutdownDependencyPlugin())
     application.add_plugin(scenes)
 

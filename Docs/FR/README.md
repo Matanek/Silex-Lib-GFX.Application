@@ -64,9 +64,11 @@ Ces noms répondent à des intentions différentes :
 
 Une scène applicative n’est donc ni une scène 2D ni une scène 3D. Elle peut ne
 contenir aucun graphisme, employer un seul domaine, ou composer les deux. Pour
-du contenu 2D, installez `Scene2D.Plugin()` une fois sur l’Application afin de
-conserver le renderer et ses caches, puis `Scene2D.Content()` sur chaque scène
-qui possède les composants. La même séparation vaut pour Scene3D et Animation.
+du contenu 2D, installez `Plugins.Scene2D()` une fois sur l’Application afin de
+conserver le renderer et ses caches, puis `Plugins.Scene2DContent()` sur chaque
+scène qui possède les composants. La même séparation vaut pour Scene3D et
+Animation. Ces Plugins sont tous exposés directement sous `GFX.Plugins` afin
+que l’auto-complétion du catalogue suffise à les découvrir.
 
 Les systèmes restent des fonctions ordinaires enregistrées avec
 `add_system(Schedule, callback)`. Leurs paramètres injectent les ressources et
@@ -89,27 +91,29 @@ la capacité manquante.
 Les packages graphiques séparent ainsi deux intentions : `Plugin()` installe
 les capacités globales dont la durée de vie couvre l’Application, tandis que
 `Content()` raccorde les systèmes qui lisent les composants de la scène active.
-Une même scène peut par exemple combiner `Scene2D.Content()`,
-`Scene3D.Content()` et `Animation.Content()`.
+Une même scène peut par exemple combiner `Plugins.Scene2DContent()`,
+`Plugins.Scene3DContent()` et `Plugins.AnimationContent()`.
 
 ## Hébergement dans Application
 
-`Application.Scenes` est à la fois le Plugin statique et l’hôte injectable qui
-possède l’unique scène active. Il ajoute six relais fixes aux schedules globaux ;
-un changement de scène ne modifie donc jamais le plan de l’Application.
+`Plugins.SceneManager` expose à la fois le Plugin statique et l’hôte
+injectable qui possède l’unique scène active. Il ajoute six relais fixes aux
+schedules globaux ; un changement de scène ne modifie donc jamais le plan de
+l’Application.
 
 ```sx
 use GFX.Application
+use GFX.Plugins
 
 class Level { let number:int }
 
 func next_level(
-    scenes:&Application.Scenes,
+    manager:&Plugins.SceneManager,
     level:@Level,
     controller:&Application.Controller
 ) {
     if level.number == 2 { controller.stop(); return }
-    scenes.request(scenes.create()
+    manager.request(manager.create()
         ..add_resource(Level(number:level.number + 1))
         ..add_system(Application.Schedule.update, next_level))
 }
@@ -119,9 +123,9 @@ func main() {
     var initial = Application.Scene(application)
         ..add_resource(Level(number:1))
         ..add_system(Application.Schedule.update, next_level)
-    var scenes = Application.Scenes(initial)
+    var manager = Plugins.SceneManager(initial)
 
-    application.add_plugin(scenes)
+    application.add_plugin(manager)
     application.run()
 }
 ```
@@ -134,7 +138,7 @@ tant que cette frontière n’est pas atteinte produit une erreur explicite.
 
 À l’arrêt de l’Application, une demande encore en attente est annulée et la
 scène active est finalisée. Installer d’abord les Plugins fournissant les
-capacités globales, puis `Scenes`, respecte l’ordre inverse d’arrêt des Plugins
+capacités globales, puis `SceneManager`, respecte l’ordre inverse d’arrêt des Plugins
 et garantit que la scène libère ses usages avant ces capacités.
 
 ## Exemples exécutables
