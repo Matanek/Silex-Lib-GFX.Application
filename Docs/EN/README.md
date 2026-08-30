@@ -51,6 +51,27 @@ The package depends only on `GFX` and `GFX.ECS`. Scene2D, Scene3D, Rendering,
 Canvas, Animation, and Audio integrate separately; they are not part of this
 first generic context.
 
+## Choose the application scene or graphics domain
+
+These names answer different intentions:
+
+| Capability | What it owns |
+| --- | --- |
+| `Application` | the loop, windows, GPU, and resources that survive transitions |
+| `Application.Scene` | a replaceable system plan, its local resources, and its `ECS.World` |
+| `Scene2D` / `Scene3D` | the specialized components and systems that describe and render content |
+
+An application scene is therefore neither a 2D nor a 3D scene. It may contain
+no graphics, use one domain, or compose both. For 2D content, install
+`Scene2D.Plugin()` once on the Application so the renderer and its caches stay
+alive, then add `Scene2D.Content()` to every scene that owns the components.
+The same separation applies to Scene3D and Animation.
+
+Systems remain ordinary functions registered through
+`add_system(Schedule, callback)`. Their parameters inject existing resources
+and queries; a scene does not automatically turn a class into an entity or a
+method into a system.
+
 ## Scene plugins
 
 `Application.ScenePlugin` lets a specialized package configure a scene while
@@ -112,3 +133,16 @@ On Application shutdown, any pending request is cancelled and the active scene
 is finalized. Install Plugins that provide global capabilities first and
 `Scenes` last; the reverse Plugin shutdown order then guarantees that the scene
 releases its uses before those capabilities.
+
+## Executable examples
+
+- [AnalogClock](https://github.com/Matanek/Silex-Examples/blob/main/Sources/AnalogClock.sx)
+  retains its Canvas drawings and updates only the hand transforms in one
+  scene.
+- [SceneTransitions](https://github.com/Matanek/Silex-Examples/blob/main/Sources/SceneTransitions.sx)
+  replaces two contexts that use the same resource and component types without
+  mixing their entities.
+
+Each demo compiles as an ordinary public application. Its executable accepts
+`--verify` to open a hidden window, run a bounded number of frames, assert its
+invariants, and stop automatically.

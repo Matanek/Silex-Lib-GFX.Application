@@ -52,6 +52,27 @@ Le package dépend seulement de `GFX` et `GFX.ECS`. Les domaines Scene2D,
 Scene3D, Rendering, Canvas, Animation et Audio se raccordent séparément ; ils ne
 font pas partie de ce premier contexte générique.
 
+## Choisir entre scène applicative et domaine graphique
+
+Ces noms répondent à des intentions différentes :
+
+| Capacité | Ce qu’elle possède |
+| --- | --- |
+| `Application` | la boucle, les fenêtres, le GPU et les ressources qui survivent aux transitions |
+| `Application.Scene` | un plan de systèmes remplaçable, ses ressources locales et son `ECS.World` |
+| `Scene2D` / `Scene3D` | les composants et systèmes spécialisés qui décrivent et rendent le contenu |
+
+Une scène applicative n’est donc ni une scène 2D ni une scène 3D. Elle peut ne
+contenir aucun graphisme, employer un seul domaine, ou composer les deux. Pour
+du contenu 2D, installez `Scene2D.Plugin()` une fois sur l’Application afin de
+conserver le renderer et ses caches, puis `Scene2D.Content()` sur chaque scène
+qui possède les composants. La même séparation vaut pour Scene3D et Animation.
+
+Les systèmes restent des fonctions ordinaires enregistrées avec
+`add_system(Schedule, callback)`. Leurs paramètres injectent les ressources et
+requêtes existantes ; la scène ne transforme automatiquement ni une classe en
+entité, ni une méthode en système.
+
 ## Plugins de scène
 
 `Application.ScenePlugin` permet à un package spécialisé de configurer une
@@ -115,3 +136,16 @@ tant que cette frontière n’est pas atteinte produit une erreur explicite.
 scène active est finalisée. Installer d’abord les Plugins fournissant les
 capacités globales, puis `Scenes`, respecte l’ordre inverse d’arrêt des Plugins
 et garantit que la scène libère ses usages avant ces capacités.
+
+## Exemples exécutables
+
+- [AnalogClock](https://github.com/Matanek/Silex-Examples/blob/main/Sources/AnalogClock.sx)
+  conserve ses dessins Canvas et ne met à jour que les transformations de ses
+  aiguilles dans une scène unique.
+- [SceneTransitions](https://github.com/Matanek/Silex-Examples/blob/main/Sources/SceneTransitions.sx)
+  remplace deux contextes contenant les mêmes types de ressources et de
+  composants sans mélanger leurs entités.
+
+Chaque démonstration se compile comme une application publique ordinaire. Son
+exécutable accepte `--verify` pour ouvrir une fenêtre cachée, exécuter un nombre
+borné de frames, vérifier ses invariants et s’arrêter automatiquement.
