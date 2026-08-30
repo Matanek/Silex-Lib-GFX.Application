@@ -104,7 +104,7 @@ Plugin scope changes.
 
 - [AnalogClock](https://github.com/Matanek/Silex-Examples/blob/main/Sources/AnalogClock.sx)
   hosts one window's Canvas content in a Bundle.
-- [SceneTransitions](https://github.com/Matanek/Silex-Examples/blob/main/Sources/SceneTransitions.sx)
+- [BundleTransitions](https://github.com/Matanek/Silex-Examples/blob/main/Sources/BundleTransitions.sx)
   uses `replace` to represent two scenes with isolated Bundles.
 
 Each executable accepts `--verify` for bounded automated validation.
