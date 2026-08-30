@@ -1,0 +1,64 @@
+use GFX.Application
+use GFX.Plugins
+use GFX.Window
+
+struct WindowNumber { let value:int }
+
+class WindowProbe {
+    var observed:int[]
+    var identifiers:uint32[]
+
+    init() {
+        self.observed = []
+        self.identifiers = []
+    }
+}
+
+func inspect_window(
+    number:@WindowNumber,
+    window:@Window,
+    probe:&WindowProbe,
+    controller:&Application.Controller
+) {
+    probe.observed.append(number.value)
+    probe.identifiers.append(window.id().value)
+    controller.stop()
+}
+
+func window_bundle(
+    application:Application,
+    number:int,
+    title:str
+) Application.Bundle {
+    return Application.Bundle(application)
+        ..add_resource(WindowNumber(value:number))
+        ..add_plugin(Plugins.Window(Plugins.Window.Settings()
+            ..title = title
+            ..width = 64
+            ..height = 64
+            ..hidden = true
+        ))
+        ..add_system(Application.Schedule.update, inspect_window)
+}
+
+test "run two independently owned windows in simultaneous Bundles" {
+    var application = Application()
+    var probe = WindowProbe()
+    application.add_resource(probe)
+
+    var first = window_bundle(application, 1, "First Bundle")
+    var second = window_bundle(application, 2, "Second Bundle")
+    var manager = Plugins.BundleManager()
+    manager.add(first)
+    manager.add(second)
+    application.add_plugin(manager)
+
+    assert(application.run() == 0)
+    assert(first.is_finalized())
+    assert(second.is_finalized())
+    assert(probe.observed.count() == 2)
+    assert(probe.identifiers.count() == 2)
+    assert(probe.identifiers[0] != 0)
+    assert(probe.identifiers[1] != 0)
+    assert(probe.identifiers[0] != probe.identifiers[1])
+}

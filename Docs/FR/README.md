@@ -104,8 +104,12 @@ seule la portée choisie pour les Plugins change.
 
 - [AnalogClock](https://github.com/Matanek/Silex-Examples/blob/main/Sources/AnalogClock.sx)
   héberge le contenu Canvas d’une fenêtre dans un Bundle.
-- [BundleTransitions](https://github.com/Matanek/Silex-Examples/blob/main/Sources/BundleTransitions.sx)
-  utilise `replace` pour représenter deux scènes avec des Bundles isolés.
+- [Bundle/Transitions](https://github.com/Matanek/Silex-Examples/blob/main/Sources/Bundle/Transitions.sx)
+  remplace le contenu d’une fenêtre dont les Plugins de présentation restent globaux.
+- [Bundle/WindowReplacement](https://github.com/Matanek/Silex-Examples/blob/main/Sources/Bundle/WindowReplacement.sx)
+  remplace un splashscreen fenêtré complet par la fenêtre principale.
+- [Bundle/MultipleWindows](https://github.com/Matanek/Silex-Examples/blob/main/Sources/Bundle/MultipleWindows.sx)
+  exécute deux fenêtres complètes qui se ferment indépendamment.
 
 Chaque exécutable accepte `--verify` afin d’effectuer une validation bornée et
 automatique.
