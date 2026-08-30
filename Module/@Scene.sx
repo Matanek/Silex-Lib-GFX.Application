@@ -1,11 +1,26 @@
 // Aggregated into the canonical GFX.Application module.
 use GFX.ECS.Commands
 use GFX.ECS.World
+use Interop.C
 
 enum SceneState {
     ready
     mounted
     finalized
+}
+
+// Configures systems and local resources while a Scene is still ready. Scene
+// plugins never mutate the parent Application or its locked schedule plan.
+public protocol ScenePlugin {
+    func id() str
+    func build(scene:&Scene)
+}
+
+// Keeps the erased plugin family concrete in programs that only use Scene
+// directly and never install a ScenePlugin.
+struct EmptyScenePlugin:ScenePlugin {
+    func id() str { return "GFX.Application.EmptyScenePlugin" }
+    func build(scene:&Scene) {}
 }
 
 class SceneSystem {
@@ -47,14 +62,22 @@ class SceneSystem {
 }
 
 public class Scene {
+    private var application_address:uint
     private var resource_store:Resources
     private var registered_systems:SceneSystem[]
+    private var installed_plugin_ids:str[]
+    private var installed_plugins:ScenePlugin[]
+    private var required_application_plugins:str[]
     private var state:SceneState
     private var query_dispatches:int
 
     init(application:Application) {
+        self.application_address = C.object_address(application)
         self.resource_store = application.resources().scope()
         self.registered_systems = []
+        self.installed_plugin_ids = []
+        self.installed_plugins = []
+        self.required_application_plugins = []
         self.state = SceneState.ready
         self.query_dispatches = 0
         self.resource_store.insert(World())
@@ -69,6 +92,39 @@ public class Scene {
     func add_resource<T>(value:T) Scene {
         self.require_configurable()
         self.resource_store.insert(move value)
+        return self
+    }
+
+    func add_plugin(plugin:ScenePlugin) Scene {
+        self.require_configurable()
+        var candidate = plugin
+        let id = candidate.id()
+        for installed in self.installed_plugin_ids {
+            if installed == id { return self }
+        }
+        self.installed_plugin_ids.append(id)
+        self.installed_plugins.append(candidate)
+        var installed = self.installed_plugins[self.installed_plugins.count() - 1]
+        installed.build(self)
+        return self
+    }
+
+    func has_plugin(id:str) bool {
+        for installed in self.installed_plugin_ids {
+            if installed == id { return true }
+        }
+        return false
+    }
+
+    // Records a global capability required before this scene can mount. The
+    // check is deferred because Application resolves its requested Plugins at
+    // prepare/run time, after scenes are commonly configured.
+    func require_application_plugin(id:str) Scene {
+        self.require_configurable()
+        for required in self.required_application_plugins {
+            if required == id { return self }
+        }
+        self.required_application_plugins.append(id)
         return self
     }
 
@@ -146,6 +202,7 @@ public class Scene {
         if self.state == SceneState.finalized {
             panic("GFX.Application.Scene cannot be mounted after finalization")
         }
+        self.validate_application_plugins()
         self.state = SceneState.mounted
         self.run_phase(Schedule.initialize)
         self.run_phase(Schedule.startup)
@@ -170,7 +227,7 @@ public class Scene {
         self.run_phase(Schedule.shutdown)
         self.run_phase(Schedule.finalize)
         self.state = SceneState.finalized
-        self.resource_store.clear()
+        self.resource_store.invalidate()
     }
 
     func is_mounted() bool { return self.state == SceneState.mounted }
@@ -182,7 +239,7 @@ public class Scene {
     drop {
         if self.state == SceneState.mounted {
             self.unmount()
-        } else {
+        } elif self.state == SceneState.ready {
             self.resource_store.clear()
         }
     }
@@ -196,6 +253,20 @@ public class Scene {
     private func require_available() {
         if self.state == SceneState.finalized {
             panic("GFX.Application.Scene resources were finalized")
+        }
+    }
+
+    private func validate_application_plugins() {
+        var application = C.object_from_address<Application>(self.application_address)
+        let installed = application.installed_plugins()
+        for required in self.required_application_plugins {
+            var found = false
+            for id in installed {
+                if id == required { found = true }
+            }
+            if !found {
+                panic("GFX.Application.Scene requires application plugin '" + required + "' before mount")
+            }
         }
     }
 

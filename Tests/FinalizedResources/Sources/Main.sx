@@ -1,0 +1,11 @@
+use GFX.Application
+
+func main() {
+    var application = Application()
+        ..add_resource(42)
+    var scene = Application.Scene(application)
+    var escaped = scene.resources()
+    scene.mount()
+    scene.unmount()
+    escaped.has<int>()
+}

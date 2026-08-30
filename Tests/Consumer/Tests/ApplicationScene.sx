@@ -22,6 +22,21 @@ class QueryProbe {
 struct ScopedStep { let value:int }
 struct Position { let value:int }
 
+struct InstalledByScenePlugin { let value:int }
+
+class ScenePluginProbe { var builds:int }
+
+struct TestScenePlugin:Application.ScenePlugin {
+    var probe:ScenePluginProbe
+
+    func id() str { return "GFX.Application.Tests.ScenePlugin" }
+
+    func build(scene:&Application.Scene) {
+        self.probe.builds++
+        scene.add_resource(InstalledByScenePlugin(value:42))
+    }
+}
+
 struct OwnedResource {
     let scene_owned:bool
     var trace:Trace
@@ -150,4 +165,18 @@ test "isolate identical component and resource types between scenes" {
     assert(second_probe.total == 22)
     first.unmount()
     second.unmount()
+}
+
+test "install each scene plugin once while the scene is configurable" {
+    var application = Application()
+    var probe = ScenePluginProbe(builds:0)
+    var scene = Application.Scene(application)
+        ..add_plugin(TestScenePlugin(probe:probe))
+        ..add_plugin(TestScenePlugin(probe:probe))
+
+    assert(scene.has_plugin("GFX.Application.Tests.ScenePlugin"))
+    assert(probe.builds == 1)
+    assert(scene.resources().get<InstalledByScenePlugin>().value == 42)
+    scene.mount()
+    scene.unmount()
 }

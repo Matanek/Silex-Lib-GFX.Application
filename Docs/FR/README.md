@@ -31,6 +31,8 @@ Construire et configurer une scène n’exécute aucun système. `mount()` exéc
 `initialize`, puis `startup`, une seule fois. `run_schedule` accepte les phases
 de frame ordinaires. `unmount()` exécute `shutdown`, puis `finalize`, libère les
 ressources et entités locales et rend la scène définitivement inutilisable.
+Tout handle obtenu auparavant avec `scene.resources()` est invalidé au même
+moment : il ne peut ni lire les ressources parentes, ni réinsérer une valeur.
 
 La scène possède son `ECS.World` et ses `ECS.Commands`. Deux scènes peuvent donc
 employer les mêmes types de composants sans partager leurs entités. Les
@@ -49,6 +51,25 @@ le magasin global.
 Le package dépend seulement de `GFX` et `GFX.ECS`. Les domaines Scene2D,
 Scene3D, Rendering, Canvas, Animation et Audio se raccordent séparément ; ils ne
 font pas partie de ce premier contexte générique.
+
+## Plugins de scène
+
+`Application.ScenePlugin` permet à un package spécialisé de configurer une
+scène tant qu’elle est prête. `scene.add_plugin(...)` conserve le Plugin,
+appelle `build(scene)` une seule fois par identifiant et refuse toute nouvelle
+configuration après le montage.
+
+Un Plugin de scène qui dépend d’une capacité globale l’enregistre avec
+`scene.require_application_plugin(id)`. La vérification a lieu juste avant le
+montage, après la résolution différée des Plugins de l’Application ; une
+configuration incomplète échoue donc avant `initialize` avec l’identifiant de
+la capacité manquante.
+
+Les packages graphiques séparent ainsi deux intentions : `Plugin()` installe
+les capacités globales dont la durée de vie couvre l’Application, tandis que
+`Content()` raccorde les systèmes qui lisent les composants de la scène active.
+Une même scène peut par exemple combiner `Scene2D.Content()`,
+`Scene3D.Content()` et `Animation.Content()`.
 
 ## Hébergement dans Application
 
