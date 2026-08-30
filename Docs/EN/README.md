@@ -1,151 +1,110 @@
 # GFX.Application
 
-`GFX.Application` adds a shorter-lived scene to the canonical application
-module. GFX still provides the `Application` type; this package adds
-`Application.Scene` without a platform facade or game-engine object model.
+`GFX.Application` adds composable application contexts to the canonical
+module. `Application` keeps the process's single main loop;
+`Application.Bundle` owns a local set of Plugins, systems, and resources driven
+by that loop.
+
+A Bundle may represent temporary window content, a complete window, an
+independent tool, or another sub-application. It does not mean a graphics
+scene: a future scene system may build on Bundles without conflating the two
+concepts.
+
+## Plugins and resources
+
+A Bundle uses exactly the same `Application.Plugin` protocol as an
+Application:
 
 ```sx
-use GFX.Application
-
-struct Score { var value:int }
-
-func update(score:&Score) {
-    score.value += 1
-}
-
-func main() {
-    var application = Application()
-    var scene = Application.Scene(application)
-        ..add_resource(Score(value:0))
-        ..add_system(Application.Schedule.update, update)
-
-    scene.mount()
-    scene.run_schedule(Application.Schedule.update)
-    scene.unmount()
-}
+var bundle = Application.Bundle(application)
+    ..add_plugin(Plugins.Grid2D())
+    ..add_resource(Document())
+    ..add_system(Application.Schedule.update, update_document)
 ```
 
-## Lifetime
+There is no `ScenePlugin`, nor a `Content` variant of the 2D, 3D, or Animation
+Plugins. A Plugin installed on a Bundle receives an ordinary `&Application`
+representing its local context.
 
-Constructing and configuring a scene runs no system. `mount()` runs
-`initialize`, then `startup`, exactly once. `run_schedule` accepts ordinary
-frame phases. `unmount()` runs `shutdown`, then `finalize`, releases local
-resources and entities, and permanently finalizes the scene.
-Any handle previously returned by `scene.resources()` is invalidated at the
-same boundary: it can neither read parent resources nor insert another value.
+Local resources shadow parent resources of the same type. A missing read falls
+back to the Application without copying the value; removing or finalizing the
+Bundle never changes its parent.
 
-The scene owns its `ECS.World` and `ECS.Commands`, so two scenes may use the
-same component types without sharing entities. Structural commands are applied
-after `post_update` and during shutdown.
-A final flush after `finalize` guarantees that no deferred command survives the
-removed context.
+A Plugin that provides a durable capability may call
+`application.extend_bundles(self)`. The same Plugin is then prepared in every
+Bundle. `Scene2D`, `Scene3D`, and `Animation` use this mechanism: when installed
+globally, they retain their shared capabilities and automatically connect their
+local systems to Bundles. A Plugin such as `Grid2D` may also add `Scene2D`
+directly inside its own Bundle. Users therefore have no second Plugin type to
+discover or declare.
 
-## Global and local resources
+## BundleManager
 
-Resources added to a scene are local. When a system requests a type absent from
-the scene, injection consults the associated Application resources without
-copying them. A local resource of the same type always shadows the global one.
-Removing or finalizing the scene never changes the global store.
+`Plugins.BundleManager` mounts, drives, and finalizes Bundles at safe main-loop
+boundaries.
 
-The package depends only on `GFX` and `GFX.ECS`. Scene2D, Scene3D, Rendering,
-Canvas, Animation, and Audio integrate separately; they are not part of this
-first generic context.
+- `add(bundle)` adds a Bundle without removing active ones, so multiple windows
+  or tools can progress together.
+- `remove(bundle)` removes one specific Bundle.
+- `replace(bundle)` atomically replaces every active Bundle; this path suits a
+  splash screen, page, or game scene.
+- `create()` creates a Bundle associated with the Application after the manager
+  has been installed.
 
-## Choose the application scene or graphics domain
-
-These names answer different intentions:
-
-| Capability | What it owns |
-| --- | --- |
-| `Application` | the loop, windows, GPU, and resources that survive transitions |
-| `Application.Scene` | a replaceable system plan, its local resources, and its `ECS.World` |
-| `Scene2D` / `Scene3D` | the specialized components and systems that describe and render content |
-
-An application scene is therefore neither a 2D nor a 3D scene. It may contain
-no graphics, use one domain, or compose both. For 2D content, install
-`Plugins.Scene2D()` once on the Application so the renderer and its caches stay
-alive, then add `Plugins.Scene2DContent()` to every scene that owns the
-components. The same separation applies to Scene3D and Animation. All these
-Plugins are exposed directly under `GFX.Plugins`, so catalog completion is
-enough to discover them.
-
-Systems remain ordinary functions registered through
-`add_system(Schedule, callback)`. Their parameters inject existing resources
-and queries; a scene does not automatically turn a class into an entity or a
-method into a system.
-
-## Scene plugins
-
-`Application.ScenePlugin` lets a specialized package configure a scene while
-it is ready. `scene.add_plugin(...)` retains the Plugin, calls `build(scene)`
-once per identifier, and rejects further configuration after mounting.
-
-A scene Plugin that depends on a global capability records it with
-`scene.require_application_plugin(id)`. Validation runs immediately before
-mounting, after the Application's deferred Plugins have resolved, so incomplete
-configuration fails before `initialize` and names the missing capability.
-
-Graphics packages therefore separate two intents: `Plugin()` installs global
-capabilities whose lifetime spans the Application, while `Content()` connects
-systems that read components from the active scene. One scene may combine
-`Plugins.Scene2DContent()`, `Plugins.Scene3DContent()`, and
-`Plugins.AnimationContent()`, for example.
-
-## Application hosting
-
-`Plugins.SceneManager` exposes both the static Plugin and the injectable
-host that owns the single active scene. It adds six fixed relays to the global
-schedules, so replacing a scene never changes the Application plan.
+Operations requested during a frame are applied at the next `pre_update`. The
+outgoing Bundle therefore completes its frame and runs `shutdown` then
+`finalize` before the incoming Bundle runs `initialize` and `startup`.
 
 ```sx
 use GFX.Application
 use GFX.Plugins
 
-class Level { let number:int }
+class Page { let number:int }
 
-func next_level(
-    manager:&Plugins.SceneManager,
-    level:@Level,
+func update_page(
+    page:@Page,
+    manager:&Plugins.BundleManager,
     controller:&Application.Controller
 ) {
-    if level.number == 2 { controller.stop(); return }
-    manager.request(manager.create()
-        ..add_resource(Level(number:level.number + 1))
-        ..add_system(Application.Schedule.update, next_level))
+    if page.number == 2 { controller.stop(); return }
+    manager.replace(manager.create()
+        ..add_resource(Page(number:2))
+        ..add_system(Application.Schedule.update, update_page))
 }
 
 func main() {
     var application = Application()
-    var initial = Application.Scene(application)
-        ..add_resource(Level(number:1))
-        ..add_system(Application.Schedule.update, next_level)
-    var manager = Plugins.SceneManager(initial)
+    var first = Application.Bundle(application)
+        ..add_resource(Page(number:1))
+        ..add_system(Application.Schedule.update, update_page)
 
-    application.add_plugin(manager)
-    application.run()
+    application.add_plugin(Plugins.BundleManager(first))
+    assert(application.run() == 0)
 }
 ```
 
-The Application mounts the initial scene during `startup`. A request made in a
-frame remains pending until the beginning of the next `pre_update`: the
-outgoing scene therefore completes its frame, then runs `shutdown` and
-`finalize` before the incoming scene runs `initialize` and `startup`. A second
-request before that boundary reports an explicit error.
+Each Bundle owns its `Application.Controller`. Stopping it only stops that
+Bundle. `BundleManager` automatically finalizes stopped Bundles and stops the
+Application when the last one is gone. A window placed inside a Bundle may
+therefore close independently while the Application remains responsible for
+the single main loop.
 
-On Application shutdown, any pending request is cancelled and the active scene
-is finalized. Install Plugins that provide global capabilities first and
-`SceneManager` last; the reverse Plugin shutdown order then guarantees that the scene
-releases its uses before those capabilities.
+## Common layouts
+
+For a single-window application whose content changes, place `Window`,
+`Rendering`, and `Scene2D` on the Application, then place content-specific
+resources and Plugins in its Bundles.
+
+For several independent windows, the Application may contain only
+`BundleManager`. Each Bundle then installs its own `Window`, renderer, and
+required 2D or 3D capabilities. Both layouts use the same API; only the chosen
+Plugin scope changes.
 
 ## Executable examples
 
 - [AnalogClock](https://github.com/Matanek/Silex-Examples/blob/main/Sources/AnalogClock.sx)
-  retains its Canvas drawings and updates only the hand transforms in one
-  scene.
+  hosts one window's Canvas content in a Bundle.
 - [SceneTransitions](https://github.com/Matanek/Silex-Examples/blob/main/Sources/SceneTransitions.sx)
-  replaces two contexts that use the same resource and component types without
-  mixing their entities.
+  uses `replace` to represent two scenes with isolated Bundles.
 
-Each demo compiles as an ordinary public application. Its executable accepts
-`--verify` to open a hidden window, run a bounded number of frames, assert its
-invariants, and stop automatically.
+Each executable accepts `--verify` for bounded automated validation.

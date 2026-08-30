@@ -1,0 +1,208 @@
+use GFX.Application
+use GFX.ECS
+
+class Trace {
+    var steps:int[]
+    var local_drops:int
+    var global_drops:int
+
+    init() {
+        self.steps = []
+        self.local_drops = 0
+        self.global_drops = 0
+    }
+}
+
+class GlobalCounter { var value:int }
+class QueryProbe {
+    var count:int
+    var total:int
+}
+struct ScopedStep { let value:int }
+struct Position { let value:int }
+struct InstalledByPlugin { let value:int }
+class PluginProbe { var builds:int }
+
+struct TestPlugin:Application.Plugin {
+    var probe:PluginProbe
+
+    func id() str { return "GFX.Application.Tests.BundlePlugin" }
+
+    func build(application:&Application) {
+        self.probe.builds++
+        application.add_resource(InstalledByPlugin(value:42))
+        application.add_system(Application.Schedule.update, inspect_plugin_resource)
+    }
+}
+
+struct OwnedResource {
+    let bundle_owned:bool
+    var trace:Trace
+
+    drop {
+        if self.bundle_owned { self.trace.local_drops++ }
+        else { self.trace.global_drops++ }
+    }
+}
+
+func initialize(trace:&Trace) { trace.steps.append(1) }
+func startup(trace:&Trace) { trace.steps.append(2) }
+
+func update(
+    trace:&Trace,
+    global:&GlobalCounter,
+    step:@ScopedStep,
+    commands:&ECS.Commands,
+    controller:&Application.Controller
+) {
+    assert(step.value == 2)
+    global.value += step.value
+    trace.steps.append(3)
+    commands.spawn(ECS.EntityRecipe()..with(Position(value:global.value)))
+    controller.stop()
+}
+
+func shutdown(trace:&Trace) { trace.steps.append(4) }
+func finalize(trace:&Trace) { trace.steps.append(5) }
+func inspect_plugin_resource(value:@InstalledByPlugin) { assert(value.value == 42) }
+
+test "drive a Bundle with standard Plugins and scoped resources" {
+    var trace = Trace()
+    var global = GlobalCounter(value:40)
+    var application = Application()
+        ..add_resource(global)
+        ..add_resource(ScopedStep(value:100))
+        ..add_resource(OwnedResource(bundle_owned:false, trace:trace))
+    var bundle = Application.Bundle(application)
+        ..add_plugin(ECS.Plugin())
+        ..add_resource(trace)
+        ..add_resource(ScopedStep(value:2))
+        ..add_resource(OwnedResource(bundle_owned:true, trace:trace))
+        ..add_system(Application.Schedule.initialize, initialize)
+        ..add_system(Application.Schedule.startup, startup)
+        ..add_system(Application.Schedule.update, update)
+        ..add_system(Application.Schedule.shutdown, shutdown)
+        ..add_system(Application.Schedule.finalize, finalize)
+
+    var manager = Application.BundleManager(bundle)
+    application.add_plugin(manager)
+    assert(application.run() == 0)
+
+    assert(bundle.is_finalized())
+    assert(global.value == 42)
+    assert(trace.steps.count() == 5)
+    for index in 0...5 { assert(trace.steps[index] == index + 1) }
+    assert(trace.local_drops == 1)
+    assert(trace.global_drops == 0)
+    assert(application.resources().has<OwnedResource>())
+}
+
+func spawn_distinct(value:@ScopedStep, world:&ECS.World) {
+    world.spawn(ECS.EntityRecipe()..with(Position(value:value.value)))
+}
+
+func inspect_distinct(
+    expected:@ScopedStep,
+    query:ECS.Query<(ECS.Entity, @Position)>,
+    probe:&QueryProbe,
+    controller:&Application.Controller
+) {
+    for (entity, position) in query {
+        assert(entity.is_valid())
+        assert(position.value == expected.value)
+        probe.count++
+        probe.total += position.value
+    }
+    controller.stop()
+}
+
+test "run several isolated Bundles in the same Application loop" {
+    var application = Application()
+    var first_probe = QueryProbe(count:0, total:0)
+    var second_probe = QueryProbe(count:0, total:0)
+    var first = Application.Bundle(application)
+        ..add_plugin(ECS.Plugin())
+        ..add_resource(ScopedStep(value:11))
+        ..add_resource(first_probe)
+        ..add_system(Application.Schedule.startup, spawn_distinct)
+        ..add_system(Application.Schedule.update, inspect_distinct)
+    var second = Application.Bundle(application)
+        ..add_plugin(ECS.Plugin())
+        ..add_resource(ScopedStep(value:22))
+        ..add_resource(second_probe)
+        ..add_system(Application.Schedule.startup, spawn_distinct)
+        ..add_system(Application.Schedule.update, inspect_distinct)
+    var manager = Application.BundleManager()
+    manager.add(first)
+    manager.add(second)
+    application.add_plugin(manager)
+
+    assert(application.run() == 0)
+    assert(manager.active_count() == 0)
+    assert(first.is_finalized())
+    assert(second.is_finalized())
+    assert(first_probe.count == 1 && first_probe.total == 11)
+    assert(second_probe.count == 1 && second_probe.total == 22)
+}
+
+test "install an ordinary Application Plugin once in a Bundle" {
+    var application = Application()
+    var probe = PluginProbe(builds:0)
+    var bundle = Application.Bundle(application)
+        ..add_plugin(TestPlugin(probe:probe))
+        ..add_plugin(TestPlugin(probe:probe))
+        ..add_system(Application.Schedule.update, func(controller:&Application.Controller) {
+            controller.stop()
+        })
+    var manager = Application.BundleManager(bundle)
+    application.add_plugin(manager)
+
+    assert(bundle.has_plugin("GFX.Application.Tests.BundlePlugin"))
+    assert(probe.builds == 0)
+    assert(application.run() == 0)
+    assert(probe.builds == 1)
+}
+
+class PropagationProbe {
+    var root_builds:int
+    var bundle_builds:int
+}
+struct PropagatedResource { let value:int }
+
+struct PropagatedPlugin:Application.Plugin {
+    var probe:PropagationProbe
+
+    func id() str { return "GFX.Application.Tests.PropagatedPlugin" }
+
+    func build(application:&Application) {
+        if application.inherits_plugin(self.id()) {
+            self.probe.bundle_builds++
+            application.add_resource(PropagatedResource(value:42))
+            application.add_system(Application.Schedule.update, verify_propagated_plugin)
+            return
+        }
+        self.probe.root_builds++
+        application.extend_bundles(self)
+    }
+}
+
+func verify_propagated_plugin(
+    value:@PropagatedResource,
+    controller:&Application.Controller
+) {
+    assert(value.value == 42)
+    controller.stop()
+}
+
+test "extend Bundles with the same standard Plugin" {
+    var application = Application()
+    var probe = PropagationProbe(root_builds:0, bundle_builds:0)
+    var bundle = Application.Bundle(application)
+    application
+        ..add_plugin(PropagatedPlugin(probe:probe))
+        ..add_plugin(Application.BundleManager(bundle))
+
+    assert(application.run() == 0)
+    assert(probe.root_builds == 1)
+    assert(probe.bundle_builds == 1)
+}

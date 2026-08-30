@@ -1,0 +1,145 @@
+// Aggregated into the canonical GFX.Application module.
+
+enum BundleState {
+    ready
+    mounted
+    finalized
+}
+
+// A locally owned Application context driven by its parent Application loop.
+// Bundles use the ordinary Application.Plugin protocol and scheduler API; the
+// child resource scope only falls back to its parent for missing reads.
+public class Bundle {
+    private var context:Application
+    private var state:BundleState
+
+    init(application:Application) {
+        self.context = Application.scoped(application)
+        self.state = BundleState.ready
+    }
+
+    func resources() Resources {
+        self.require_available()
+        return self.context.resources()
+    }
+
+    func add_resource<T>(value:T) Bundle {
+        self.require_configurable()
+        self.context.add_resource(move value)
+        return self
+    }
+
+    func add_plugin<T:Plugin>(plugin:T) Bundle {
+        self.require_configurable()
+        self.context.add_plugin(plugin)
+        return self
+    }
+
+    func has_plugin(id:str) bool { return self.context.has_plugin(id) }
+    func inherits_plugin(id:str) bool { return self.context.inherits_plugin(id) }
+
+    func add_system(schedule:Schedule, callback:func(Application)) Bundle {
+        self.require_configurable()
+        self.context.add_system(schedule, callback)
+        return self
+    }
+
+    func add_system<System>(schedule:Schedule, callback:System) Bundle {
+        self.require_configurable()
+        self.context.add_system(schedule, callback)
+        return self
+    }
+
+    func add_after_system(schedule:Schedule, callback:func(Application)) Bundle {
+        self.require_configurable()
+        self.context.add_after_system(schedule, callback)
+        return self
+    }
+
+    func add_after_system<System>(schedule:Schedule, callback:System) Bundle {
+        self.require_configurable()
+        self.context.add_after_system(schedule, callback)
+        return self
+    }
+
+    // Compiler hook: typed systems registered through Bundle execute against
+    // the standard child Application context.
+    module func __silex_system_host() Application { return self.context }
+
+    module func __silex_add_system(
+        schedule:Schedule,
+        callback:func(Application, int),
+        after:bool,
+        reads:str[],
+        writes:str[],
+        flags:uint
+    ) Bundle {
+        self.require_configurable()
+        self.context.__silex_add_system(schedule, callback, after, reads, writes, flags)
+        return self
+    }
+
+    func is_ready() bool { return self.state == BundleState.ready }
+    func is_mounted() bool { return self.state == BundleState.mounted }
+    func is_finalized() bool { return self.state == BundleState.finalized }
+    func is_running() bool {
+        return self.state == BundleState.mounted && self.context.is_running()
+    }
+
+    module func mount() {
+        if self.state == BundleState.mounted {
+            panic("GFX.Application.Bundle is already mounted")
+        }
+        if self.state == BundleState.finalized {
+            panic("GFX.Application.Bundle cannot be mounted after finalization")
+        }
+        self.context.inherit_bundle_plugins()
+        self.context.seal()
+        self.context.start()
+        self.state = BundleState.mounted
+        self.context.run_schedule(Schedule.initialize)
+        self.context.run_schedule(Schedule.startup)
+    }
+
+    module func run_schedule(schedule:Schedule) {
+        if self.state != BundleState.mounted {
+            panic("GFX.Application.Bundle must be mounted before running a schedule")
+        }
+        if schedule == Schedule.initialize || schedule == Schedule.startup ||
+            schedule == Schedule.shutdown || schedule == Schedule.finalize
+        {
+            panic("GFX.Application.Bundle lifecycle schedules are controlled by BundleManager")
+        }
+        self.context.run_schedule(schedule)
+    }
+
+    module func unmount() {
+        if self.state != BundleState.mounted {
+            panic("GFX.Application.Bundle can only unmount an active Bundle")
+        }
+        self.context.run_schedule(Schedule.shutdown)
+        self.context.run_schedule(Schedule.finalize)
+        self.state = BundleState.finalized
+        self.context.invalidate_resources()
+    }
+
+    drop {
+        if self.state == BundleState.mounted {
+            self.unmount()
+        } elif self.state == BundleState.ready {
+            self.context.invalidate_resources()
+        }
+    }
+
+    private func require_configurable() {
+        if self.state != BundleState.ready {
+            panic("GFX.Application.Bundle cannot change its configuration after mount")
+        }
+    }
+
+    private func require_available() {
+        if self.state == BundleState.finalized {
+            panic("GFX.Application.Bundle resources were finalized")
+        }
+    }
+}

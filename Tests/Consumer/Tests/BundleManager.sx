@@ -1,0 +1,58 @@
+use GFX.Application
+use GFX.Plugins
+
+test "discover BundleManager directly through the Plugin catalog" {
+    var manager = Plugins.BundleManager()
+    assert(manager.id() == "GFX.Application.BundleManager")
+}
+
+class TransitionTrace {
+    var steps:int[]
+    init() { self.steps = [] }
+}
+
+func first_initialize(trace:&TransitionTrace) { trace.steps.append(1) }
+func first_startup(trace:&TransitionTrace) { trace.steps.append(2) }
+
+func first_update(manager:&Application.BundleManager, trace:&TransitionTrace) {
+    trace.steps.append(3)
+    manager.replace(manager.create()
+        ..add_system(Application.Schedule.initialize, second_initialize)
+        ..add_system(Application.Schedule.startup, second_startup)
+        ..add_system(Application.Schedule.update, second_update)
+        ..add_system(Application.Schedule.shutdown, second_shutdown)
+        ..add_system(Application.Schedule.finalize, second_finalize))
+}
+
+func first_shutdown(trace:&TransitionTrace) { trace.steps.append(4) }
+func first_finalize(trace:&TransitionTrace) { trace.steps.append(5) }
+func second_initialize(trace:&TransitionTrace) { trace.steps.append(6) }
+func second_startup(trace:&TransitionTrace) { trace.steps.append(7) }
+
+func second_update(trace:&TransitionTrace, controller:&Application.Controller) {
+    trace.steps.append(8)
+    controller.stop()
+}
+
+func second_shutdown(trace:&TransitionTrace) { trace.steps.append(9) }
+func second_finalize(trace:&TransitionTrace) { trace.steps.append(10) }
+
+test "replace all Bundles at a safe frame boundary" {
+    var trace = TransitionTrace()
+    var application = Application()..add_resource(trace)
+    var first = Application.Bundle(application)
+        ..add_system(Application.Schedule.initialize, first_initialize)
+        ..add_system(Application.Schedule.startup, first_startup)
+        ..add_system(Application.Schedule.update, first_update)
+        ..add_system(Application.Schedule.shutdown, first_shutdown)
+        ..add_system(Application.Schedule.finalize, first_finalize)
+    var manager = Application.BundleManager(first)
+    application.add_plugin(manager)
+
+    assert(application.run() == 0)
+    assert(manager.active_count() == 0)
+    assert(!manager.has_pending())
+    assert(first.is_finalized())
+    assert(trace.steps.count() == 10)
+    for index in 0...10 { assert(trace.steps[index] == index + 1) }
+}

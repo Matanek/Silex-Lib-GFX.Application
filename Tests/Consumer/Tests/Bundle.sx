@@ -1,0 +1,26 @@
+use GFX.Application
+
+class GlobalState { var value:int }
+struct LocalStep { let value:int }
+
+func advance(global:&GlobalState, step:@LocalStep) {
+    global.value += step.value
+}
+
+func stop_bundle(global:&GlobalState, step:@LocalStep, controller:&Application.Controller) {
+    advance(global, step)
+    controller.stop()
+}
+
+test "consume Bundle through the merged Application module" {
+    var global = GlobalState(value:40)
+    var application = Application()..add_resource(global)
+    var bundle = Application.Bundle(application)
+        ..add_resource(LocalStep(value:2))
+        ..add_system(Application.Schedule.update, stop_bundle)
+    var manager = Application.BundleManager(bundle)
+    application.add_plugin(manager)
+
+    assert(application.run() == 0)
+    assert(global.value == 42)
+}

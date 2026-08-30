@@ -1,0 +1,255 @@
+// Aggregated into the canonical GFX.Application module.
+use GFX.Application.Plugin as PluginProtocol
+use Interop.C
+
+contribute GFX.Plugins {
+    public use GFX.Application.BundleManager as BundleManager
+}
+
+// Drives independently scheduled Bundle contexts from the single Application
+// loop. Mutations are committed at startup or at the next pre_update boundary.
+public class BundleManager:PluginProtocol {
+    private var application_address:uint
+    private var active:Bundle[]
+    private var pending_additions:Bundle[]
+    private var pending_removals:uint[]
+    private var pending_replacement:Bundle?
+
+    init(initial:Bundle? = null) {
+        self.application_address = 0
+        self.active = []
+        self.pending_additions = []
+        self.pending_removals = []
+        self.pending_replacement = null
+        if let bundle = initial { self.pending_additions.append(bundle) }
+    }
+
+    func id() str { return "GFX.Application.BundleManager" }
+
+    func build(application:&Application) {
+        if self.application_address != 0 {
+            panic("GFX.Application.BundleManager cannot be installed in more than one Application")
+        }
+        self.application_address = C.object_address(application)
+        application.add_resource(self)
+        application.add_system(Schedule.startup, start_bundles)
+        application.add_system(Schedule.pre_update, pre_update_bundles)
+        application.add_system(Schedule.update, update_bundles)
+        application.add_system(Schedule.post_update, post_update_bundles)
+        application.add_system(Schedule.render, render_bundles)
+        application.add_system(Schedule.shutdown, stop_bundles)
+    }
+
+    func create() Bundle {
+        if self.application_address == 0 {
+            panic("GFX.Application.BundleManager must be installed before creating a Bundle")
+        }
+        var application = C.object_from_address<Application>(self.application_address)
+        return Bundle(application)
+    }
+
+    // Adds a Bundle without replacing those already active. This is the path
+    // for independent windows, tools, and overlays.
+    func add(bundle:Bundle) {
+        self.require_ready(bundle)
+        if self.pending_replacement != null {
+            panic("GFX.Application.BundleManager cannot mix additions with a pending replacement")
+        }
+        let address = C.object_address(bundle)
+        if self.contains_active(address) || self.contains_pending_addition(address) {
+            panic("GFX.Application.BundleManager already owns this Bundle")
+        }
+        self.pending_additions.append(bundle)
+    }
+
+    // Removes one Bundle at the next safe boundary.
+    func remove(bundle:Bundle) {
+        let address = C.object_address(bundle)
+        if self.pending_replacement != null {
+            panic("GFX.Application.BundleManager cannot mix removals with a pending replacement")
+        }
+        if self.contains_pending_addition(address) {
+            var retained:Bundle[] = []
+            for candidate in self.pending_additions {
+                if C.object_address(candidate) != address { retained.append(candidate) }
+            }
+            self.pending_additions = retained
+            return
+        }
+        if !self.contains_active(address) {
+            panic("GFX.Application.BundleManager does not own this Bundle")
+        }
+        if self.contains_pending_removal(address) {
+            panic("GFX.Application.BundleManager already has a pending removal for this Bundle")
+        }
+        self.pending_removals.append(address)
+    }
+
+    // Replaces every active Bundle atomically. This provides the simple
+    // splash-screen/page/game-state transition while add/remove remain usable
+    // for multi-window compositions.
+    func replace(bundle:Bundle) {
+        self.require_ready(bundle)
+        if self.pending_replacement != null {
+            panic("GFX.Application.BundleManager already has a pending replacement")
+        }
+        if self.pending_additions.count() != 0 || self.pending_removals.count() != 0 {
+            panic("GFX.Application.BundleManager cannot mix replacement with pending mutations")
+        }
+        self.pending_replacement = bundle
+    }
+
+    func active_count() int { return self.active.count() }
+    func has_pending() bool {
+        return self.pending_replacement != null ||
+            self.pending_additions.count() != 0 || self.pending_removals.count() != 0
+    }
+
+    module func start() { self.commit_pending() }
+
+    module func run(schedule:Schedule) {
+        if schedule == Schedule.pre_update {
+            self.commit_pending()
+            if self.active.is_empty() && !self.has_pending() {
+                var application = C.object_from_address<Application>(self.application_address)
+                application.stop()
+            }
+        }
+        for bundle in self.active {
+            if bundle.is_running() { bundle.run_schedule(schedule) }
+        }
+    }
+
+    module func stop() {
+        self.pending_replacement = null
+        self.pending_additions = []
+        self.pending_removals = []
+        self.application_address = 0
+        var index = self.active.count() - 1
+        while index >= 0 {
+            var bundle = self.active[index]
+            bundle.unmount()
+            index--
+        }
+        self.active = []
+    }
+
+    private func commit_pending() {
+        self.remove_stopped()
+
+        var replacement = self.pending_replacement
+        self.pending_replacement = null
+        if var bundle = replacement {
+            self.unmount_all()
+            bundle.mount()
+            self.active.append(bundle)
+            return
+        }
+
+        if self.pending_removals.count() != 0 {
+            var retained:Bundle[] = []
+            for bundle in self.active {
+                let address = C.object_address(bundle)
+                if self.contains_pending_removal(address) {
+                    bundle.unmount()
+                } else {
+                    retained.append(bundle)
+                }
+            }
+            self.active = retained
+            self.pending_removals = []
+        }
+
+        var additions = self.pending_additions
+        self.pending_additions = []
+        for bundle in additions {
+            bundle.mount()
+            self.active.append(bundle)
+        }
+    }
+
+    private func remove_stopped() {
+        var retained:Bundle[] = []
+        for bundle in self.active {
+            if bundle.is_running() {
+                retained.append(bundle)
+            } else {
+                bundle.unmount()
+            }
+        }
+        self.active = retained
+    }
+
+    private func unmount_all() {
+        var index = self.active.count() - 1
+        while index >= 0 {
+            var bundle = self.active[index]
+            bundle.unmount()
+            index--
+        }
+        self.active = []
+    }
+
+    private func require_ready(bundle:Bundle) {
+        if !bundle.is_ready() {
+            panic("GFX.Application.BundleManager only accepts a ready Bundle")
+        }
+    }
+
+    private func contains_active(address:uint) bool {
+        for bundle in self.active {
+            if C.object_address(bundle) == address { return true }
+        }
+        return false
+    }
+
+    private func contains_pending_addition(address:uint) bool {
+        for bundle in self.pending_additions {
+            if C.object_address(bundle) == address { return true }
+        }
+        return false
+    }
+
+    private func contains_pending_removal(address:uint) bool {
+        for candidate in self.pending_removals {
+            if candidate == address { return true }
+        }
+        return false
+    }
+}
+
+func start_bundles(application:Application) {
+    var resources = application.resources()
+    var manager:&BundleManager = resources.get_mut<BundleManager>()
+    manager.start()
+}
+
+func pre_update_bundles(application:Application) {
+    var resources = application.resources()
+    var manager:&BundleManager = resources.get_mut<BundleManager>()
+    manager.run(Schedule.pre_update)
+}
+
+func update_bundles(application:Application) {
+    var resources = application.resources()
+    var manager:&BundleManager = resources.get_mut<BundleManager>()
+    manager.run(Schedule.update)
+}
+
+func post_update_bundles(application:Application) {
+    var resources = application.resources()
+    var manager:&BundleManager = resources.get_mut<BundleManager>()
+    manager.run(Schedule.post_update)
+}
+
+func render_bundles(application:Application) {
+    var resources = application.resources()
+    var manager:&BundleManager = resources.get_mut<BundleManager>()
+    manager.run(Schedule.render)
+}
+
+func stop_bundles(application:Application) {
+    var resources = application.resources()
+    var manager:&BundleManager = resources.get_mut<BundleManager>()
+    manager.stop()
+}

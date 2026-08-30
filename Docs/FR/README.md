@@ -1,155 +1,111 @@
 # GFX.Application
 
-`GFX.Application` complète le module applicatif canonique avec une scène de
-durée de vie plus courte. Le type `Application` reste fourni par GFX ; le
-package ajoute `Application.Scene` sans façade de plateforme ni moteur de jeu.
+`GFX.Application` ajoute des contextes applicatifs composables au module
+canonique. `Application` conserve l’unique boucle principale du processus ;
+`Application.Bundle` possède un ensemble local de Plugins, de systèmes et de
+ressources piloté par cette boucle.
+
+Un Bundle peut représenter le contenu temporaire d’une fenêtre, une fenêtre
+complète, un outil autonome ou une autre sous-application. Il ne désigne pas
+une scène graphique : un futur système de scènes pourra s’appuyer sur les
+Bundles sans confondre les deux notions.
+
+## Plugins et ressources
+
+Un Bundle emploie exactement le même protocole `Application.Plugin` qu’une
+Application :
 
 ```sx
-use GFX.Application
-
-struct Score { var value:int }
-
-func update(score:&Score) {
-    score.value += 1
-}
-
-func main() {
-    var application = Application()
-    var scene = Application.Scene(application)
-        ..add_resource(Score(value:0))
-        ..add_system(Application.Schedule.update, update)
-
-    scene.mount()
-    scene.run_schedule(Application.Schedule.update)
-    scene.unmount()
-}
+var bundle = Application.Bundle(application)
+    ..add_plugin(Plugins.Grid2D())
+    ..add_resource(Document())
+    ..add_system(Application.Schedule.update, update_document)
 ```
 
-## Durée de vie
+Il n’existe ni `ScenePlugin`, ni variante `Content` des Plugins 2D, 3D ou
+Animation. Un Plugin installé sur un Bundle reçoit un `&Application` standard
+qui représente son contexte local.
 
-Construire et configurer une scène n’exécute aucun système. `mount()` exécute
-`initialize`, puis `startup`, une seule fois. `run_schedule` accepte les phases
-de frame ordinaires. `unmount()` exécute `shutdown`, puis `finalize`, libère les
-ressources et entités locales et rend la scène définitivement inutilisable.
-Tout handle obtenu auparavant avec `scene.resources()` est invalidé au même
-moment : il ne peut ni lire les ressources parentes, ni réinsérer une valeur.
+Les ressources locales masquent les ressources parentes du même type. Une
+lecture absente du Bundle remonte vers l’Application sans copier la valeur ; la
+suppression ou la finalisation du Bundle ne modifie jamais le parent.
 
-La scène possède son `ECS.World` et ses `ECS.Commands`. Deux scènes peuvent donc
-employer les mêmes types de composants sans partager leurs entités. Les
-commandes structurelles sont appliquées après `post_update` et pendant l’arrêt.
-Une dernière application après `finalize` garantit qu’aucune commande différée
-ne survit au contexte retiré.
+Un Plugin qui fournit une capacité durable peut appeler
+`application.extend_bundles(self)`. Le même Plugin est alors préparé dans
+chaque Bundle. `Scene2D`, `Scene3D` et `Animation` utilisent ce mécanisme :
+installés globalement, ils conservent leurs capacités partagées et raccordent
+automatiquement leurs systèmes locaux aux Bundles. Un Plugin comme `Grid2D`
+peut aussi ajouter `Scene2D` directement dans son propre Bundle. L’utilisateur
+n’a donc aucun second type de Plugin à découvrir ou à déclarer.
 
-## Ressources globales et locales
+## BundleManager
 
-Les ressources ajoutées à la scène sont locales. Lorsqu’un système demande un
-type absent de la scène, l’injection consulte les ressources de l’Application
-associée sans les copier. Une ressource locale de même type masque toujours la
-ressource globale. Le retrait ou la finalisation de la scène ne modifie jamais
-le magasin global.
+`Plugins.BundleManager` monte, exécute et finalise les Bundles aux frontières
+sûres de la boucle principale.
 
-Le package dépend seulement de `GFX` et `GFX.ECS`. Les domaines Scene2D,
-Scene3D, Rendering, Canvas, Animation et Audio se raccordent séparément ; ils ne
-font pas partie de ce premier contexte générique.
+- `add(bundle)` ajoute un Bundle sans retirer ceux qui sont actifs ; plusieurs
+  fenêtres ou outils peuvent ainsi progresser ensemble.
+- `remove(bundle)` retire un Bundle précis.
+- `replace(bundle)` remplace atomiquement tous les Bundles actifs ; ce chemin
+  convient à un splashscreen, une page ou une scène de jeu.
+- `create()` crée un Bundle associé à l’Application une fois le manager
+  installé.
 
-## Choisir entre scène applicative et domaine graphique
-
-Ces noms répondent à des intentions différentes :
-
-| Capacité | Ce qu’elle possède |
-| --- | --- |
-| `Application` | la boucle, les fenêtres, le GPU et les ressources qui survivent aux transitions |
-| `Application.Scene` | un plan de systèmes remplaçable, ses ressources locales et son `ECS.World` |
-| `Scene2D` / `Scene3D` | les composants et systèmes spécialisés qui décrivent et rendent le contenu |
-
-Une scène applicative n’est donc ni une scène 2D ni une scène 3D. Elle peut ne
-contenir aucun graphisme, employer un seul domaine, ou composer les deux. Pour
-du contenu 2D, installez `Plugins.Scene2D()` une fois sur l’Application afin de
-conserver le renderer et ses caches, puis `Plugins.Scene2DContent()` sur chaque
-scène qui possède les composants. La même séparation vaut pour Scene3D et
-Animation. Ces Plugins sont tous exposés directement sous `GFX.Plugins` afin
-que l’auto-complétion du catalogue suffise à les découvrir.
-
-Les systèmes restent des fonctions ordinaires enregistrées avec
-`add_system(Schedule, callback)`. Leurs paramètres injectent les ressources et
-requêtes existantes ; la scène ne transforme automatiquement ni une classe en
-entité, ni une méthode en système.
-
-## Plugins de scène
-
-`Application.ScenePlugin` permet à un package spécialisé de configurer une
-scène tant qu’elle est prête. `scene.add_plugin(...)` conserve le Plugin,
-appelle `build(scene)` une seule fois par identifiant et refuse toute nouvelle
-configuration après le montage.
-
-Un Plugin de scène qui dépend d’une capacité globale l’enregistre avec
-`scene.require_application_plugin(id)`. La vérification a lieu juste avant le
-montage, après la résolution différée des Plugins de l’Application ; une
-configuration incomplète échoue donc avant `initialize` avec l’identifiant de
-la capacité manquante.
-
-Les packages graphiques séparent ainsi deux intentions : `Plugin()` installe
-les capacités globales dont la durée de vie couvre l’Application, tandis que
-`Content()` raccorde les systèmes qui lisent les composants de la scène active.
-Une même scène peut par exemple combiner `Plugins.Scene2DContent()`,
-`Plugins.Scene3DContent()` et `Plugins.AnimationContent()`.
-
-## Hébergement dans Application
-
-`Plugins.SceneManager` expose à la fois le Plugin statique et l’hôte
-injectable qui possède l’unique scène active. Il ajoute six relais fixes aux
-schedules globaux ; un changement de scène ne modifie donc jamais le plan de
-l’Application.
+Les opérations demandées pendant une frame sont appliquées au prochain
+`pre_update`. Le Bundle sortant termine donc sa frame, exécute `shutdown` puis
+`finalize`, avant les phases `initialize` et `startup` du Bundle entrant.
 
 ```sx
 use GFX.Application
 use GFX.Plugins
 
-class Level { let number:int }
+class Page { let number:int }
 
-func next_level(
-    manager:&Plugins.SceneManager,
-    level:@Level,
+func update_page(
+    page:@Page,
+    manager:&Plugins.BundleManager,
     controller:&Application.Controller
 ) {
-    if level.number == 2 { controller.stop(); return }
-    manager.request(manager.create()
-        ..add_resource(Level(number:level.number + 1))
-        ..add_system(Application.Schedule.update, next_level))
+    if page.number == 2 { controller.stop(); return }
+    manager.replace(manager.create()
+        ..add_resource(Page(number:2))
+        ..add_system(Application.Schedule.update, update_page))
 }
 
 func main() {
     var application = Application()
-    var initial = Application.Scene(application)
-        ..add_resource(Level(number:1))
-        ..add_system(Application.Schedule.update, next_level)
-    var manager = Plugins.SceneManager(initial)
+    var first = Application.Bundle(application)
+        ..add_resource(Page(number:1))
+        ..add_system(Application.Schedule.update, update_page)
 
-    application.add_plugin(manager)
-    application.run()
+    application.add_plugin(Plugins.BundleManager(first))
+    assert(application.run() == 0)
 }
 ```
 
-L’Application monte la scène initiale pendant `startup`. Une demande reçue
-pendant une frame reste en attente jusqu’au début du prochain `pre_update` : la
-scène sortante termine donc sa frame, puis exécute `shutdown` et `finalize`
-avant les `initialize` et `startup` de la scène entrante. Une seconde demande
-tant que cette frontière n’est pas atteinte produit une erreur explicite.
+Chaque Bundle possède son `Application.Controller`. Arrêter ce contrôleur ne
+coupe que le Bundle concerné. `BundleManager` finalise automatiquement les
+Bundles arrêtés et arrête l’Application lorsque le dernier a disparu. Une
+fenêtre placée dans un Bundle peut donc se fermer indépendamment des autres,
+tandis que l’Application reste responsable de l’unique boucle principale.
 
-À l’arrêt de l’Application, une demande encore en attente est annulée et la
-scène active est finalisée. Installer d’abord les Plugins fournissant les
-capacités globales, puis `SceneManager`, respecte l’ordre inverse d’arrêt des Plugins
-et garantit que la scène libère ses usages avant ces capacités.
+## Répartition courante
+
+Pour une application à fenêtre unique dont seul le contenu change, placez par
+exemple `Window`, `Rendering` et `Scene2D` sur l’Application, puis les ressources
+et Plugins propres à chaque contenu dans ses Bundles.
+
+Pour plusieurs fenêtres indépendantes, l’Application peut ne contenir que
+`BundleManager`. Chaque Bundle installe alors son propre `Window`, son renderer
+et les capacités 2D ou 3D nécessaires. Les deux formes emploient la même API ;
+seule la portée choisie pour les Plugins change.
 
 ## Exemples exécutables
 
 - [AnalogClock](https://github.com/Matanek/Silex-Examples/blob/main/Sources/AnalogClock.sx)
-  conserve ses dessins Canvas et ne met à jour que les transformations de ses
-  aiguilles dans une scène unique.
+  héberge le contenu Canvas d’une fenêtre dans un Bundle.
 - [SceneTransitions](https://github.com/Matanek/Silex-Examples/blob/main/Sources/SceneTransitions.sx)
-  remplace deux contextes contenant les mêmes types de ressources et de
-  composants sans mélanger leurs entités.
+  utilise `replace` pour représenter deux scènes avec des Bundles isolés.
 
-Chaque démonstration se compile comme une application publique ordinaire. Son
-exécutable accepte `--verify` pour ouvrir une fenêtre cachée, exécuter un nombre
-borné de frames, vérifier ses invariants et s’arrêter automatiquement.
+Chaque exécutable accepte `--verify` afin d’effectuer une validation bornée et
+automatique.

@@ -1,11 +1,14 @@
 use GFX.Application
 
+func stop(controller:&Application.Controller) { controller.stop() }
+
 func main() {
     var application = Application()
         ..add_resource(42)
-    var scene = Application.Scene(application)
-    var escaped = scene.resources()
-    scene.mount()
-    scene.unmount()
+    var bundle = Application.Bundle(application)
+        ..add_system(Application.Schedule.update, stop)
+    var escaped = bundle.resources()
+    application.add_plugin(Application.BundleManager(bundle))
+    assert(application.run() == 0)
     escaped.has<int>()
 }

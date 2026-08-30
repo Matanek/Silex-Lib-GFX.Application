@@ -2,8 +2,8 @@ use GFX.Application
 
 func main() {
     var application = Application()
-    var scenes = Application.SceneManager()
-    application.add_plugin(scenes).prepare()
-    scenes.request(scenes.create())
-    scenes.request(scenes.create())
+    var bundle = Application.Bundle(application)
+    var manager = Application.BundleManager()
+    manager.add(bundle)
+    manager.add(bundle)
 }
