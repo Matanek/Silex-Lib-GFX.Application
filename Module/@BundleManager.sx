@@ -13,14 +13,14 @@ public class BundleManager:PluginProtocol {
     private var active:Bundle[]
     private var pending_additions:Bundle[]
     private var pending_removals:uint[]
-    private var pending_replacement:Bundle?
+    private var pending_replacement:Bundle[]
 
     init(initial:Bundle? = null) {
         self.application_address = 0
         self.active = []
         self.pending_additions = []
         self.pending_removals = []
-        self.pending_replacement = null
+        self.pending_replacement = []
         if let bundle = initial { self.pending_additions.append(bundle) }
     }
 
@@ -52,7 +52,7 @@ public class BundleManager:PluginProtocol {
     // for independent windows, tools, and overlays.
     func add(bundle:Bundle) {
         self.require_ready(bundle)
-        if self.pending_replacement != null {
+        if !self.pending_replacement.is_empty() {
             panic("GFX.Application.BundleManager cannot mix additions with a pending replacement")
         }
         let address = C.object_address(bundle)
@@ -65,15 +65,18 @@ public class BundleManager:PluginProtocol {
     // Removes one Bundle at the next safe boundary.
     func remove(bundle:Bundle) {
         let address = C.object_address(bundle)
-        if self.pending_replacement != null {
+        if !self.pending_replacement.is_empty() {
             panic("GFX.Application.BundleManager cannot mix removals with a pending replacement")
         }
         if self.contains_pending_addition(address) {
-            var retained:Bundle[] = []
-            for candidate in self.pending_additions {
-                if C.object_address(candidate) != address { retained.append(candidate) }
+            var index = self.pending_additions.count() - 1
+            while index >= 0 {
+                let candidate:@Bundle = @self.pending_additions[index]
+                if C.object_address(candidate) == address {
+                    self.pending_additions.take(index)
+                }
+                index--
             }
-            self.pending_additions = retained
             return
         }
         if !self.contains_active(address) {
@@ -90,18 +93,18 @@ public class BundleManager:PluginProtocol {
     // for multi-window compositions.
     func replace(bundle:Bundle) {
         self.require_ready(bundle)
-        if self.pending_replacement != null {
+        if !self.pending_replacement.is_empty() {
             panic("GFX.Application.BundleManager already has a pending replacement")
         }
         if self.pending_additions.count() != 0 || self.pending_removals.count() != 0 {
             panic("GFX.Application.BundleManager cannot mix replacement with pending mutations")
         }
-        self.pending_replacement = bundle
+        self.pending_replacement.append(bundle)
     }
 
     func active_count() int { return self.active.count() }
     func has_pending() bool {
-        return self.pending_replacement != null ||
+        return !self.pending_replacement.is_empty() ||
             self.pending_additions.count() != 0 || self.pending_removals.count() != 0
     }
 
@@ -124,25 +127,18 @@ public class BundleManager:PluginProtocol {
     }
 
     module func stop() {
-        self.pending_replacement = null
+        self.pending_replacement = []
         self.pending_additions = []
         self.pending_removals = []
         self.application_address = 0
-        var index = self.active.count() - 1
-        while index >= 0 {
-            var bundle = self.active[index]
-            bundle.unmount()
-            index--
-        }
-        self.active = []
+        self.unmount_all()
     }
 
     private func commit_pending() {
         self.remove_stopped()
 
-        var replacement = self.pending_replacement
-        self.pending_replacement = null
-        if var bundle = replacement {
+        if !self.pending_replacement.is_empty() {
+            var bundle = self.pending_replacement.take(0)
             self.unmount_all()
             bundle.mount()
             self.active.append(bundle)
@@ -150,66 +146,60 @@ public class BundleManager:PluginProtocol {
         }
 
         if self.pending_removals.count() != 0 {
-            var retained:Bundle[] = []
-            for bundle in self.active {
-                let address = C.object_address(bundle)
-                if self.contains_pending_removal(address) {
-                    bundle.unmount()
-                } else {
-                    retained.append(bundle)
+            var index = self.active.count() - 1
+            while index >= 0 {
+                let bundle:@Bundle = @self.active[index]
+                if self.contains_pending_removal(C.object_address(bundle)) {
+                    var removed = self.active.take(index)
+                    removed.unmount()
                 }
+                index--
             }
-            self.active = retained
             self.pending_removals = []
         }
 
-        var additions = self.pending_additions
-        self.pending_additions = []
-        for bundle in additions {
+        while !self.pending_additions.is_empty() {
+            var bundle = self.pending_additions.take(0)
             bundle.mount()
             self.active.append(bundle)
         }
     }
 
     private func remove_stopped() {
-        var index = 0
-        while index < self.active.count() {
+        var index = self.active.count() - 1
+        while index >= 0 {
             let bundle:@Bundle = @self.active[index]
-            if !bundle.is_running() { break }
-            index++
-        }
-        if index == self.active.count() { return }
-
-        var retained:Bundle[] = []
-        for bundle in self.active {
-            if bundle.is_running() {
-                retained.append(bundle)
-            } else {
-                bundle.unmount()
+            if !bundle.is_running() {
+                var removed = self.active.take(index)
+                if removed.is_mounted() {
+                    removed.unmount()
+                }
             }
+            index--
         }
-        self.active = retained
     }
 
     private func unmount_all() {
-        var index = self.active.count() - 1
-        while index >= 0 {
-            var bundle = self.active[index]
-            bundle.unmount()
-            index--
+        while !self.active.is_empty() {
+            var bundle = self.active.take(self.active.count() - 1)
+            if bundle.is_mounted() {
+                bundle.unmount()
+            }
         }
-        self.active = []
     }
 
-    private func require_ready(bundle:Bundle) {
+    private func require_ready(bundle:@Bundle) {
         if !bundle.is_ready() {
             panic("GFX.Application.BundleManager only accepts a ready Bundle")
         }
     }
 
     private func contains_active(address:uint) bool {
-        for bundle in self.active {
+        var index = 0
+        while index < self.active.count() {
+            let bundle:@Bundle = @self.active[index]
             if C.object_address(bundle) == address { return true }
+            index++
         }
         return false
     }
@@ -219,8 +209,11 @@ public class BundleManager:PluginProtocol {
     }
 
     private func contains_pending_addition(address:uint) bool {
-        for bundle in self.pending_additions {
+        var index = 0
+        while index < self.pending_additions.count() {
+            let bundle:@Bundle = @self.pending_additions[index]
             if C.object_address(bundle) == address { return true }
+            index++
         }
         return false
     }
