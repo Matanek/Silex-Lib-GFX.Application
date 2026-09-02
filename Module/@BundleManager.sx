@@ -115,8 +115,11 @@ public class BundleManager:PluginProtocol {
                 application.stop()
             }
         }
-        for bundle in self.active {
+        var index = 0
+        while index < self.active.count() {
+            var bundle:&Bundle = self.active_mut(index)
             if bundle.is_running() { bundle.run_schedule(schedule) }
+            index++
         }
     }
 
@@ -169,6 +172,14 @@ public class BundleManager:PluginProtocol {
     }
 
     private func remove_stopped() {
+        var index = 0
+        while index < self.active.count() {
+            let bundle:@Bundle = @self.active[index]
+            if !bundle.is_running() { break }
+            index++
+        }
+        if index == self.active.count() { return }
+
         var retained:Bundle[] = []
         for bundle in self.active {
             if bundle.is_running() {
@@ -201,6 +212,10 @@ public class BundleManager:PluginProtocol {
             if C.object_address(bundle) == address { return true }
         }
         return false
+    }
+
+    private func active_mut(index:int) &Bundle {
+        return &self.active[index]
     }
 
     private func contains_pending_addition(address:uint) bool {
