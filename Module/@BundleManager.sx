@@ -219,37 +219,43 @@ public class BundleManager:PluginProtocol {
 }
 
 func start_bundles(application:Application) {
-    var resources = application.resources()
+    var mutable_application = application
+    var resources = mutable_application.resources()
     var manager:&BundleManager = resources.get_mut<BundleManager>()
     manager.start()
 }
 
 func pre_update_bundles(application:Application) {
-    var resources = application.resources()
+    var mutable_application = application
+    var resources = mutable_application.resources()
     var manager:&BundleManager = resources.get_mut<BundleManager>()
     manager.run(Schedule.pre_update)
 }
 
 func update_bundles(application:Application) {
-    var resources = application.resources()
+    var mutable_application = application
+    var resources = mutable_application.resources()
     var manager:&BundleManager = resources.get_mut<BundleManager>()
     manager.run(Schedule.update)
 }
 
 func post_update_bundles(application:Application) {
-    var resources = application.resources()
+    var mutable_application = application
+    var resources = mutable_application.resources()
     var manager:&BundleManager = resources.get_mut<BundleManager>()
     manager.run(Schedule.post_update)
 }
 
 func render_bundles(application:Application) {
-    var resources = application.resources()
+    var mutable_application = application
+    var resources = mutable_application.resources()
     var manager:&BundleManager = resources.get_mut<BundleManager>()
     manager.run(Schedule.render)
 }
 
 func stop_bundles(application:Application) {
-    var resources = application.resources()
+    var mutable_application = application
+    var resources = mutable_application.resources()
     var manager:&BundleManager = resources.get_mut<BundleManager>()
     manager.stop()
 }
