@@ -3,6 +3,15 @@ use GFX.Application
 class GlobalState { var value:int }
 struct LocalStep { let value:int }
 
+test "discard an unused Bundle without clearing its invalidated scope twice" {
+    var application = Application()..add_resource(GlobalState(value:42))
+    {
+        var bundle = Application.Bundle(application)
+        bundle.add_resource(LocalStep(value:1))
+    }
+    assert(application.resources().get<GlobalState>().value == 42)
+}
+
 func advance(global:&GlobalState, step:@LocalStep) {
     global.value += step.value
 }
