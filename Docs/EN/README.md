@@ -89,6 +89,28 @@ Application when the last one is gone. A window placed inside a Bundle may
 therefore close independently while the Application remains responsible for
 the single main loop.
 
+## Pause a Bundle
+
+Each Bundle owns an `Application.Simulation` resource distinct from its
+parent's. This fragment pauses only that context:
+
+```sx
+var resources = bundle.resources()
+var simulation = resources.get_mut<Application.Simulation>()
+simulation.pause()
+// Call simulation.resume() to resume.
+```
+
+`Bundle.add_system` and `add_after_system` accept `process_mode` just like
+Application. By default, Bundle updates stop during its pause and rendering
+continues. Use `Application.ProcessMode.always` for a control that must also
+allow resuming, or `when_paused` for a menu. Pausing does not finalize the
+Bundle or change `is_running()`.
+
+The manager keeps driving all its Bundles even while the parent's simulation
+is paused. To pause several worlds, explicitly pause each context. The Nodes,
+Animation and Physics2D plugins follow their own context's simulation.
+
 ## Common layouts
 
 For a single-window application whose content changes, place `Window`,

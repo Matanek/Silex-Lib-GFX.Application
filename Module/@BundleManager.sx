@@ -33,9 +33,9 @@ public class BundleManager:PluginProtocol {
         self.application_address = C.object_address(application)
         application.add_resource(self)
         application.add_system(Schedule.startup, start_bundles)
-        application.add_system(Schedule.pre_update, pre_update_bundles)
-        application.add_system(Schedule.update, update_bundles)
-        application.add_system(Schedule.post_update, post_update_bundles)
+        application.add_system(Schedule.pre_update, pre_update_bundles, process_mode:GFX.Application.ProcessMode.always)
+        application.add_system(Schedule.update, update_bundles, process_mode:GFX.Application.ProcessMode.always)
+        application.add_system(Schedule.post_update, post_update_bundles, process_mode:GFX.Application.ProcessMode.always)
         application.add_system(Schedule.render, render_bundles)
         application.add_system(Schedule.shutdown, stop_bundles)
     }

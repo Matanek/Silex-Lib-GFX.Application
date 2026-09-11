@@ -1,0 +1,59 @@
+use GFX.Application
+
+class PauseCounts {
+    var updates:int = 0
+    var menus:int = 0
+    var renders:int = 0
+}
+
+func update_count(counts:&PauseCounts) { counts.updates++ }
+func render_count(counts:&PauseCounts) { counts.renders++ }
+func menu_count(application:Application) {
+    var resources = application.resources()
+    var counts = resources.get_mut<PauseCounts>()
+    counts.menus++
+}
+
+func pause(resources:Application.Resources, value:bool) {
+    var store = resources
+    var simulation = store.get_mut<Application.Simulation>()
+    if value { simulation.pause() } else { simulation.resume() }
+}
+
+func frame(application:Application) {
+    application.run_schedule(Application.Schedule.update)
+    application.run_schedule(Application.Schedule.render)
+}
+
+test "Bundle simulations pause independently while parent dispatch and rendering continue" {
+    var root_counts = PauseCounts()
+    var child_counts = PauseCounts()
+    var application = Application()
+        ..add_resource(root_counts)
+        ..add_system(Application.Schedule.update, update_count)
+        ..add_system(Application.Schedule.render, render_count)
+    var bundle = Application.Bundle(application)
+        ..add_resource(child_counts)
+        ..add_system(Application.Schedule.update, update_count)
+        ..add_system(Application.Schedule.render, render_count)
+        ..add_after_system(Application.Schedule.update, menu_count, process_mode:Application.ProcessMode.when_paused)
+    application.add_plugin(Application.BundleManager(bundle))
+    application.run_schedule(Application.Schedule.startup)
+    frame(application)
+    pause(application.resources(), true)
+    frame(application)
+    assert(root_counts.updates == 1 && child_counts.updates == 2)
+    pause(bundle.resources(), true)
+    frame(application)
+    assert(root_counts.updates == 1 && child_counts.updates == 2)
+    assert(child_counts.menus == 1)
+    pause(application.resources(), false)
+    frame(application)
+    assert(root_counts.updates == 2 && child_counts.updates == 2)
+    assert(child_counts.menus == 2)
+    pause(bundle.resources(), false)
+    frame(application)
+    assert(root_counts.updates == 3 && child_counts.updates == 3)
+    assert(root_counts.renders == 5 && child_counts.renders == 5)
+    application.run_schedule(Application.Schedule.shutdown)
+}

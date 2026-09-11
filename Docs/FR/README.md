@@ -89,6 +89,29 @@ Bundles arrêtés et arrête l’Application lorsque le dernier a disparu. Une
 fenêtre placée dans un Bundle peut donc se fermer indépendamment des autres,
 tandis que l’Application reste responsable de l’unique boucle principale.
 
+## Mettre un Bundle en pause
+
+Chaque Bundle possède sa propre ressource `Application.Simulation`, distincte
+de celle de son parent. Ce fragment suspend uniquement ce contexte :
+
+```sx
+var resources = bundle.resources()
+var simulation = resources.get_mut<Application.Simulation>()
+simulation.pause()
+// Appeler simulation.resume() pour reprendre.
+```
+
+`Bundle.add_system` et `add_after_system` acceptent `process_mode` comme
+l’Application. Par défaut, les mises à jour du Bundle s’arrêtent pendant sa
+pause et son rendu continue. Utiliser `Application.ProcessMode.always` pour un
+contrôle qui doit aussi permettre la reprise, ou `when_paused` pour un menu.
+Une pause ne finalise pas le Bundle et ne change pas `is_running()`.
+
+Le manager continue à piloter tous ses Bundles même si la simulation du parent
+est suspendue. Pour suspendre plusieurs mondes, mettre chacun de leurs contextes
+en pause explicitement. Les plugins Nodes, Animation et Physics2D suivent la
+simulation de leur propre contexte.
+
 ## Répartition courante
 
 Pour une application à fenêtre unique dont seul le contenu change, placez par

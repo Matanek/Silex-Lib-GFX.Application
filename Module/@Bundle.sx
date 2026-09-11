@@ -1,4 +1,5 @@
 // Aggregated into the canonical GFX.Application module.
+use GFX.Application.ProcessMode
 
 enum BundleState {
     ready
@@ -38,27 +39,27 @@ public class Bundle {
     func has_plugin(id:str) bool { return self.context.has_plugin(id) }
     func inherits_plugin(id:str) bool { return self.context.inherits_plugin(id) }
 
-    func add_system(schedule:Schedule, callback:func(Application)) Bundle {
+    func add_system(schedule:Schedule, callback:func(Application), process_mode:ProcessMode = ProcessMode.inherit) Bundle {
         self.require_configurable()
-        self.context.add_system(schedule, callback)
+        self.context.__silex_add_callback(schedule, callback, false, process_mode)
         return self
     }
 
-    func add_system<System>(schedule:Schedule, callback:System) Bundle {
+    func add_system<System>(schedule:Schedule, callback:System, process_mode:ProcessMode = ProcessMode.inherit) Bundle {
         self.require_configurable()
-        self.context.add_system(schedule, callback)
+        self.context.add_system(schedule, callback, process_mode)
         return self
     }
 
-    func add_after_system(schedule:Schedule, callback:func(Application)) Bundle {
+    func add_after_system(schedule:Schedule, callback:func(Application), process_mode:ProcessMode = ProcessMode.inherit) Bundle {
         self.require_configurable()
-        self.context.add_after_system(schedule, callback)
+        self.context.__silex_add_callback(schedule, callback, true, process_mode)
         return self
     }
 
-    func add_after_system<System>(schedule:Schedule, callback:System) Bundle {
+    func add_after_system<System>(schedule:Schedule, callback:System, process_mode:ProcessMode = ProcessMode.inherit) Bundle {
         self.require_configurable()
-        self.context.add_after_system(schedule, callback)
+        self.context.add_after_system(schedule, callback, process_mode)
         return self
     }
 
@@ -72,10 +73,11 @@ public class Bundle {
         after:bool,
         reads:str[],
         writes:str[],
-        flags:uint
+        flags:uint,
+        process_mode:ProcessMode = ProcessMode.inherit
     ) Bundle {
         self.require_configurable()
-        self.context.__silex_add_system(schedule, callback, after, reads, writes, flags)
+        self.context.__silex_add_system(schedule, callback, after, reads, writes, flags, process_mode)
         return self
     }
 
