@@ -1,13 +1,13 @@
 {
   "name": "GFX.Application",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": {
     "en": "Composable Bundle contexts driven by one Application loop.",
     "fr": "Contextes Bundle composables pilotés par une boucle Application unique."
   },
   "authors": ["Matanek"],
-  "requires": { "silex": ">=0.44.0" },
+  "requires": { "silex": ">=0.48.0" },
   "dependencies": {
-    "GFX": "^0.40.0"
+    "GFX": "^0.41.0"
   }
 }
